@@ -1,0 +1,20 @@
+# @package _global_
+
+# Baseline experiment: RadioPriorGAP (Global Average Pooling)
+# Pure neural baseline without anatomical guidance
+
+model:
+  name: RadioPriorGAP
+  num_diseases: 30
+  variant: B  # S (small), B (base), or L (large)
+  image_size: 224
+  tri_stride: 1
+  freeze_backbone: false
+  use_gradient_checkpointing: true  # CRITICAL for training unfrozen backbone (saves ~50% memory)
+
+training:
+  max_epochs: 30
+ 
+
+logging:
+  use_wandb: false

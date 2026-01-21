@@ -1,0 +1,46 @@
+# @package _global_
+
+# Anatomically Guided Gating experiment: RadioPriorGatedFusion
+# Novel gating mechanism where scalar features modulate visual features:
+# - Visual features (768d) from masked attention pooling
+# - Scalar features → Gate projector → sigmoid gate (0-1 per dimension)
+# - Gated visual = visual × gate (suppresses irrelevant features)
+# - Classification head on gated visual features
+#
+# Advantages over concatenation:
+# - Allows scalars to suppress irrelevant visual features
+# - Better gradient flow (gate initialized to ~0.88, nearly open)
+# - Fewer parameters (no need for fusion MLP)
+
+model:
+  name: RadioPriorGatedFusion
+  # Choose how visual features are pooled:
+  # - masked_attn: disease-specific organ-masked attention pooling (default)
+  # - gap: global average pooling over all tokens/tri-slices (no organ masking)
+  visual_pooling: masked_attn     #### gap | masked_attn
+  num_diseases: 30
+  disease_names: null
+  variant: B  # S (small), B (base), or L (large)
+  image_size: 224
+  tri_stride: 1
+  freeze_backbone: false
+  use_gradient_checkpointing: true  # CRITICAL for training unfrozen backbone (saves ~50% memory)
+  # feature_stats_path uses paths.feature_stats by default (set in config.yaml)
+  use_residual: false  # Gating-only: scalars gate visual features (no dual-head)
+  load_lr_weights: true  # Initialize scalar heads with pretrained LR weights
+  freeze_scalar_heads: false  # Freeze scalar heads initially to preserve LR baseline
+  unfreeze_scalar_heads_epoch: 5  # Unfreeze at epoch 10 for fine-tuning
+  debug_scalar_only: false  # If true, bypass visual pathway (LR reproduction)
+  debug_features: false  # If true, print first-forward feature debug
+
+training:
+  max_epochs: 20
+  # Learnable priors (defined in config.yaml, can override here if needed)
+  # learn_tau: true
+  # init_tau: 0.7
+  # use_mask_bias: true
+  # init_inside: 0.8
+  # init_outside: 0.2
+
+logging:
+  use_wandb: false

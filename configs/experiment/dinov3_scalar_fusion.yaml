@@ -1,0 +1,31 @@
+# @package _global_
+
+# Scalar Fusion experiment: RadioPriorScalarFusion
+# Full neuro-symbolic with visual + scalar features + learnable priors
+
+model:
+  name: RadioPriorScalarFusion
+  num_diseases: 30
+  disease_names: null
+  variant: B  # S (small), B (base), or L (large)
+  image_size: 224
+  tri_stride: 1
+  freeze_backbone: false
+  use_gradient_checkpointing: true  # CRITICAL for training unfrozen backbone (saves ~50% memory)
+  fusion_hidden: 256
+  visual_proj_dim: 256  # Project visual features to this dimension before fusion
+  scalar_proj_dim: 256  # Project scalar features to this dimension before fusion
+  feature_stats_path: ${paths.feature_stats}
+  use_modality_gating: false  # Deprecated - now using separate projectors instead
+
+training:
+  max_epochs: 20
+  # Learnable priors (defined in config.yaml, can override here if needed)
+  # learn_tau: true
+  # init_tau: 0.7
+  # use_mask_bias: true
+  # init_inside: 0.8
+  # init_outside: 0.2
+
+logging:
+  use_wandb: false

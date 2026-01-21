@@ -1,0 +1,26 @@
+# @package _global_
+
+# Masked Attention experiment: RadioPriorMaskedAttn
+# Organ-specific attention per disease with learnable priors
+
+model:
+  name: RadioPriorMaskedAttn
+  num_diseases: 30
+  disease_names: null  # null = use first 30 from ALL_DISEASES
+  variant: B  # S (small), B (base), or L (large)
+  image_size: 224
+  tri_stride: 1
+  freeze_backbone: false
+  use_gradient_checkpointing: true  # CRITICAL for training unfrozen backbone (saves ~50% memory)
+
+training:
+  max_epochs: 30
+  # Learnable priors (defined in config.yaml, can override here if needed)
+  # learn_tau: true
+  # init_tau: 0.7
+  # use_mask_bias: true
+  # init_inside: 0.8
+  # init_outside: 0.2
+
+logging:
+  use_wandb: false

@@ -1,0 +1,146 @@
+# RadioPrior Training Configuration
+# Main config file - override via experiment configs
+
+defaults:
+  - _self_
+  - experiment: dinov3_gated_fusion
+
+# Paths
+# LR Run Directory - contains disease_config_final.py, feature_stats.json, model_weights.json
+# NOTE: Use ${oc.env:VAR_NAME} for environment variables (not $VAR or ${VAR})
+paths:
+  # LR pipeline outputs (REQUIRED - from macro-radiomics/ml-examples run)
+  lr_run_dir: ${oc.env:SCRATCH}/output/ct_triage/second_project/macroradiomics/merlin/v1_new_features
+  disease_config: ${paths.lr_run_dir}/disease_config_final.py
+  feature_stats: ${paths.lr_run_dir}/feature_stats.json
+  lr_weights: ${paths.lr_run_dir}/model_weights.json
+
+  # # Data paths for Merlin dataset
+  pack_root: /cachedata/${oc.env:NETID}/merlin/packs
+  features_parquet: ${oc.env:SCRATCH}/output/ct_triage/second_project/macroradiomics/merlin/features_combined.parquet
+  labels_csv: ${oc.env:SCRATCH}/dataset/merlin/merlinabdominalctdataset/zero_shot_findings_disease_cls.csv
+  train_ids: ${oc.env:IPREDICT_ROOT}/neuro_symbolic/splits/train_ids.txt
+  val_ids: ${oc.env:IPREDICT_ROOT}/neuro_symbolic/splits/val_ids.txt
+  test_ids: ${oc.env:IPREDICT_ROOT}/neuro_symbolic/splits/val_ids.txt
+
+
+  # Data paths for Merlin dataset
+  # pack_root: /cachedata/${oc.env:NETID}/duke/packs
+  # features_parquet: ${oc.env:SCRATCH}/output/ct_triage/second_project/macroradiomics/duke/features_combined.parquet
+  # labels_csv: ${oc.env:SCRATCH}/ml-runs/duke/splits/duke_labels_case_id.csv
+  # train_ids: ${oc.env:IPREDICT_ROOT}/neuro_symbolic/splits/train_ids.txt
+  # val_ids: ${oc.env:IPREDICT_ROOT}/neuro_symbolic/splits/val_ids.txt
+  # test_ids: ${oc.env:SCRATCH}/ml-runs/duke/splits/duke_ids_full.txt
+
+  # Output (on scratch, not in code directory)
+  checkpoint: null
+  output_root: ${oc.env:SCRATCH}/output/ct_triage/second_project/janus_runs
+
+# Dataset
+dataset:
+  batch_size: 10
+  num_workers: 2
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 3
+  cache_packs: false
+
+  # Augmentation
+  use_augmentation: true
+  aug_preset: anatomy_safe_v2
+  aug_params:
+    legacy_v1:
+      allow_rot90: true
+      allow_flip_w: true
+      allow_flip_h: true
+      allow_flip_d: true
+
+    anatomy_safe_v2:
+      p_affine: 0.35
+      rot_deg: 10.0
+      translate_xy: 5.0
+      scale_min: 0.95
+      scale_max: 1.05
+      allow_flip_w: false
+      allow_flip_h: false
+      allow_flip_d: false
+      p_gamma: 0.30
+      gamma_min: 0.90
+      gamma_max: 1.10
+      p_noise: 0.30
+      noise_std: 0.01
+
+# Training
+training:
+  max_epochs: 20
+  learning_rate: 3e-4
+  weight_decay: 1e-4
+  warmup_epochs: 5
+  optimizer: adamw
+  scheduler: cosine
+  gradient_clip: 1.0
+  gradient_accumulation_steps: 1
+  use_amp: true
+
+  # Grouped learning rates
+  use_group_lrs: true
+  head_lr_scale: 3.0
+  alpha_lr_scale: 0.3
+
+  # Scheduler settings
+  scheduler_step: step
+  min_lr_scale: 0.1
+
+  # Learnable priors for masked attention
+  learn_tau: true
+  init_tau: 0.7
+  fixed_tau: 1.0
+  use_mask_bias: true
+  init_inside: 0.8
+  init_outside: 0.2
+
+  # Loss
+  loss_fn: bce_uncertain
+  use_class_weights: true
+  pos_weight: null
+  pos_weight_clip: 10.0
+
+  # BCE Uncertain Loss Parameters
+  uncertain_ignore_epochs: 20
+  uncertain_ramp_epochs: 20
+  uncertain_final_weight: 0.3
+  uncertain_target: 0.0
+
+  # Distributed training (DDP)
+  use_ddp: false
+  backend: nccl
+  find_unused_parameters: true
+
+  # Checkpointing
+  save_every_n_epochs: 10
+  save_best_only: true
+  save_last: true
+  keep_top_k: 3
+  monitor_metric: val/macro_auc
+  monitor_mode: max
+
+  # Validation
+  val_every_n_epochs: 1
+
+# Logging
+logging:
+  use_wandb: true
+  wandb_project: radioprior_v2
+  wandb_entity: null
+  log_every_n_steps: 50
+
+# Reproducibility
+seed: 25
+
+# Hydra
+hydra:
+  run:
+    dir: ${paths.output_root}/${model.name}/${now:%Y-%m-%d_%H-%M-%S}_seed${seed}
+  sweep:
+    dir: ${paths.output_root}/${model.name}/multirun/${now:%Y-%m-%d_%H-%M-%S}
+    subdir: seed${seed}_${hydra.job.num}
