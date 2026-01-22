@@ -119,12 +119,7 @@ def get_organ_id_map(scheme="totalseg", merge_name="radioprior_v1", organs=None)
     return organ_id_map
 
 
-# Legacy aliases
-RADIOPRIOR_V1_MERGE = ORGAN_CHANNELS
-RADIOPRIOR_V1_CHANNEL_LIST = ORGAN_NAMES
-RADIOPRIOR_V1_ORGANS = ORGAN_NAMES
-
-# Janus aliases (preferred)
+# Janus aliases
 JANUS_V1_CHANNEL_LIST = ORGAN_NAMES
 JANUS_V1_ORGANS = ORGAN_NAMES
 KIDNEYS_CHANNEL_IDX = KIDNEYS_CH

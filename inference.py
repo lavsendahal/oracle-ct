@@ -147,11 +147,11 @@ def main(cfg: DictConfig):
     features_parquet = None
     feature_columns = None
     if cfg.model.name in [
-        "RadioPriorScalarFusion", "JanusScalarFusion",
-        "RadioPriorScalarFusionVolume", "JanusScalarFusionVolume",
-        "RadioPriorGatedFusion", "JanusGatedFusion",
-        "RadioPriorI3D_ScalarFusion", "JanusI3D_ScalarFusion",
-        "RadioPriorScalarFusionOracle", "JanusScalarFusionOracle",
+        "JanusScalarFusion",
+        "JanusScalarFusionVolume",
+        "JanusGatedFusion",
+        "JanusI3D_ScalarFusion",
+        "JanusScalarFusionOracle",
     ]:
         features_parquet = cfg.paths.get("features_parquet")
         feature_columns = cfg.model.get("feature_columns")

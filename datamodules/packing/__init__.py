@@ -34,14 +34,10 @@ from .packer import (
     estimate_pack_size_mb,
 )
 
-# Legacy alias for backwards compatibility
-RadioPriorPacker = JanusPacker
-
 __all__ = [
     "PackBuilder",
     "PackConfig",
     "JanusPacker",
-    "RadioPriorPacker",  # Legacy alias
     "build_pack",
     "load_pack",
     "estimate_pack_size_mb",
