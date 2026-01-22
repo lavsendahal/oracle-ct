@@ -11,9 +11,9 @@
 #    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
-# radioprior_v2/datamodules/augmentation.py
+# janus/datamodules/augmentation.py
 """
-Data Augmentation for RadioPrior
+Data Augmentation for Janus
 
 Supports two presets:
 1. legacy_v1: Simple flips and 90-degree rotations

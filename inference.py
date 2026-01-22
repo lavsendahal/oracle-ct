@@ -13,14 +13,14 @@
 #    limitations under the License.
 #!/usr/bin/env python3
 """
-RadioPrior v2 Inference Script (Hydra)
+Janus Inference Script (Hydra)
 
 Runs inference on a split (default: test) and saves per-case probabilities to CSV.
 
 Example:
-  python radioprior_v2/inference.py \
+  python janus/inference.py \
     experiment=dinov3_gated_fusion \
-    paths.checkpoint=outputs/RadioPriorGatedFusion/.../checkpoints/radiopriorgatedfusion_best_macro_auc0.8759.pt \
+    paths.checkpoint=outputs/JanusGatedFusion/.../checkpoints/janusgatedfusion_best_macro_auc0.8759.pt \
     logging.use_wandb=false \
     training.use_ddp=true
 """
@@ -44,7 +44,7 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from janus.train import build_model, ddp_setup, init_distributed, ddp_cleanup, is_main_process
-from janus.datamodules.dataset import RadioPriorDataset, radioprior_collate_fn
+from janus.datamodules.dataset import JanusDataset, janus_collate_fn
 from janus.configs.disease_config import load_config_globally, get_all_diseases
 from janus.train import compute_metrics
 
@@ -147,16 +147,16 @@ def main(cfg: DictConfig):
     features_parquet = None
     feature_columns = None
     if cfg.model.name in [
-        "RadioPriorScalarFusion",
-        "RadioPriorScalarFusionVolume",
-        "RadioPriorGatedFusion",
-        "RadioPriorI3D_ScalarFusion",
-        "RadioPriorScalarFusionOracle",
+        "RadioPriorScalarFusion", "JanusScalarFusion",
+        "RadioPriorScalarFusionVolume", "JanusScalarFusionVolume",
+        "RadioPriorGatedFusion", "JanusGatedFusion",
+        "RadioPriorI3D_ScalarFusion", "JanusI3D_ScalarFusion",
+        "RadioPriorScalarFusionOracle", "JanusScalarFusionOracle",
     ]:
         features_parquet = cfg.paths.get("features_parquet")
         feature_columns = cfg.model.get("feature_columns")
 
-    dataset = RadioPriorDataset(
+    dataset = JanusDataset(
         pack_root=cfg.paths.pack_root,
         labels_csv=cfg.paths.labels_csv,
         case_ids=case_ids,
@@ -186,7 +186,7 @@ def main(cfg: DictConfig):
         pin_memory=cfg.dataset.pin_memory,
         persistent_workers=cfg.dataset.persistent_workers,
         prefetch_factor=cfg.dataset.prefetch_factor,
-        collate_fn=radioprior_collate_fn,
+        collate_fn=janus_collate_fn,
     )
 
     # Build + load model

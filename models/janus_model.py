@@ -12,14 +12,15 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 
-# radioprior_v2/models/radioprior_model.py
+# janus/models/janus_model.py
 """
-RadioPrior Models for Neuro-Symbolic CT Disease Classification
+Janus Models for Neuro-Symbolic CT Disease Classification
 
-Three model variants:
-1. RadioPriorGAP: DINOv3 + Global Average Pooling (baseline)
-2. RadioPriorMaskedAttn: DINOv3 + Organ-Masked Attention
-3. RadioPriorScalarFusion: DINOv3 + Masked Attention + Scalar Feature Fusion
+Four model variants:
+1. JanusGAP: DINOv3 + Global Average Pooling (baseline)
+2. JanusMaskedAttn: DINOv3 + Organ-Masked Attention
+3. JanusScalarFusion: DINOv3 + Masked Attention + Scalar Feature Fusion
+4. JanusGatedFusion: DINOv3 + Anatomically Guided Gating
 
 Key improvements over previous implementation:
 - Precise appendix ROI (from disease_rois) instead of colon mask
@@ -448,7 +449,7 @@ def get_attention_mask_for_disease(
 # MODEL 1: GLOBAL AVERAGE POOLING (BASELINE)
 # =============================================================================
 
-class RadioPriorGAP(nn.Module):
+class JanusGAP(nn.Module):
     """
     Baseline: DINOv3 + Global Average Pooling
 
@@ -562,7 +563,7 @@ class RadioPriorGAP(nn.Module):
 # MODEL 2: MASKED ATTENTION
 # =============================================================================
 
-class RadioPriorMaskedAttn(nn.Module):
+class JanusMaskedAttn(nn.Module):
     """
     DINOv3 + Organ-Masked Attention
 
@@ -792,7 +793,7 @@ class RadioPriorMaskedAttn(nn.Module):
 # MODEL 3: MASKED ATTENTION + SCALAR FUSION
 # =============================================================================
 
-class RadioPriorScalarFusion(nn.Module):
+class JanusScalarFusion(nn.Module):
     """
     DINOv3 + Masked Attention + Scalar Feature Fusion
 
@@ -1018,7 +1019,7 @@ class RadioPriorScalarFusion(nn.Module):
 
         for disease in self.disease_names:
             # ScalarFusion pools a single visual stream per disease; comparative masks (list of masks)
-            # are only supported by RadioPriorMaskedAttn. For comparative-config diseases, fall back
+            # are only supported by JanusMaskedAttn. For comparative-config diseases, fall back
             # to a union mask here.
             attn_mask = get_attention_mask_for_disease(
                 disease, masks, disease_rois, meta, device, allow_comparative=False
@@ -1122,7 +1123,7 @@ class AnatomicallyGuidedGate(nn.Module):
         return gated_feats
 
 
-class RadioPriorGatedFusion(nn.Module):
+class JanusGatedFusion(nn.Module):
     """
     DINOv3 + Masked Attention + Anatomically Guided Gating
 
@@ -1463,7 +1464,7 @@ class RadioPriorGatedFusion(nn.Module):
         N, D_tok = tokens.size(1), tokens.size(2)
         tokens = tokens.view(B, T, N, D_tok)
 
-        # GAP pooling across tokens and tri-slices (same as RadioPriorGAP)
+        # GAP pooling across tokens and tri-slices (same as JanusGAP)
         pooled = tokens.mean(dim=2).mean(dim=1) if self.visual_pooling == "gap" else None
 
         # Pre-compute derived features ONCE per batch (not per disease!)
@@ -1650,17 +1651,17 @@ def build_model_from_config(config: Dict[str, Any]) -> nn.Module:
     }
     
     if model_type == "gap":
-        return RadioPriorGAP(**common_args)
+        return JanusGAP(**common_args)
     
     elif model_type == "masked_attn":
-        return RadioPriorMaskedAttn(
+        return JanusMaskedAttn(
             **common_args,
             disease_names=config.get("disease_names"),
             tau=config.get("tau", 1.0),
         )
     
     elif model_type == "scalar_fusion":
-        return RadioPriorScalarFusion(
+        return JanusScalarFusion(
             **common_args,
             disease_names=config.get("disease_names"),
             tau=config.get("tau", 1.0),
@@ -1673,21 +1674,21 @@ def build_model_from_config(config: Dict[str, Any]) -> nn.Module:
 
 
 if __name__ == "__main__":
-    print("RadioPrior Models")
+    print("Janus Models")
     print("=" * 60)
     print("""
 Three model variants:
 
-1. RadioPriorGAP (baseline)
+1. JanusGAP (baseline)
    - DINOv3 + Global Average Pooling
    - No anatomical guidance
    
-2. RadioPriorMaskedAttn
+2. JanusMaskedAttn
    - Organ-masked attention per disease
    - ROI attention for appendicitis (precise box)
    - Comparative attention for steatosis (liver vs spleen)
    
-3. RadioPriorScalarFusion
+3. JanusScalarFusion
    - Masked attention + scalar feature fusion
    - Body-size normalized volumes
    - Liver-spleen HU difference

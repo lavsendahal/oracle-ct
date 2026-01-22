@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RadioPrior Pack Inspector with Appendix ROI Visualization
+Janus Pack Inspector with Appendix ROI Visualization
 
 Inspect and visualize .pt pack files:
 - Export image as NIFTI
@@ -154,7 +154,7 @@ def save_pack_as_nifti(
 def create_label_description(output_dir: Path):
     """Create label description file for ITK-SNAP with all 20 organs."""
     lines = [
-        "# ITK-SNAP Label Description File for RadioPrior v2",
+        "# ITK-SNAP Label Description File for Janus",
         "# Format: IDX  R G B A VIS MSH LABEL",
         "0     0   0   0   0  0  0    \"Background\"",
     ]
@@ -197,7 +197,7 @@ def create_label_description(output_dir: Path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Inspect and export RadioPrior pack files")
+    parser = argparse.ArgumentParser(description="Inspect and export Janus pack files")
     parser.add_argument("--pack_path", type=str, help="Path to single pack file")
     parser.add_argument("--pack_dir", type=str, help="Directory of pack files")
     parser.add_argument("--parquet", type=str, required=True, help="Path to features parquet file")

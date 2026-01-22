@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RadioPrior Pre-Packing Script with Multiprocessing
+Janus Pre-Packing Script with Multiprocessing
 
 Batch processes NIFTI CT scans into training-ready .pt packs.
 """
@@ -61,9 +61,9 @@ def worker_init(args_dict):
     repo_root = Path(__file__).resolve().parents[2]
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
-    from janus.datamodules.packing import RadioPriorPacker
+    from janus.datamodules.packing import JanusPacker
 
-    _worker_packer = RadioPriorPacker(
+    _worker_packer = JanusPacker(
         target_spacing=tuple(args_dict["target_spacing"]),
         target_shape=tuple(args_dict["target_shape"]),
         hu_range=(args_dict["hu_min"], args_dict["hu_max"]),

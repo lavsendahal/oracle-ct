@@ -1,4 +1,4 @@
-# RadioPrior Training Configuration
+# Janus Training Configuration
 # Main config file - override via experiment configs
 
 defaults:
@@ -130,7 +130,7 @@ training:
 # Logging
 logging:
   use_wandb: true
-  wandb_project: radioprior_v2
+  wandb_project: janus
   wandb_entity: null
   log_every_n_steps: 50
 

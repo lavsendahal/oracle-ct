@@ -13,7 +13,7 @@
 #    limitations under the License.
 #!/usr/bin/env python3
 """
-RadioPrior v2 Training Script
+Janus Training Script
 
 Usage:
     python train.py experiment=baseline_gap paths.labels_csv=/path/to/labels.csv
@@ -50,10 +50,10 @@ except ImportError:
     print("Warning: wandb not installed. Install with: pip install wandb")
 
 from janus.losses import build_loss_from_config, BCEUncertainLoss
-from janus.models.radioprior_model import (
-    RadioPriorGAP, RadioPriorMaskedAttn, RadioPriorScalarFusion, RadioPriorGatedFusion)
+from janus.models.janus_model import (
+    JanusGAP, JanusMaskedAttn, JanusScalarFusion, JanusGatedFusion)
 
-from janus.datamodules.dataset import RadioPriorDataset, radioprior_collate_fn
+from janus.datamodules.dataset import JanusDataset, janus_collate_fn
 from janus.configs.disease_config import load_config_globally, get_all_diseases
 
 
@@ -169,8 +169,8 @@ def build_model(cfg: DictConfig) -> nn.Module:
     if feature_stats_path is None:
         feature_stats_path = cfg.paths.get("feature_stats", None)
 
-    if model_name == "RadioPriorGAP":
-        model = RadioPriorGAP(
+    if model_name in ("RadioPriorGAP", "JanusGAP"):
+        model = JanusGAP(
             num_diseases=cfg.model.num_diseases,
             variant=cfg.model.variant,
             image_size=cfg.model.image_size,
@@ -178,8 +178,8 @@ def build_model(cfg: DictConfig) -> nn.Module:
             freeze_backbone=cfg.model.freeze_backbone,
             use_gradient_checkpointing=cfg.model.get("use_gradient_checkpointing", False),
         )
-    elif model_name == "RadioPriorMaskedAttn":
-        model = RadioPriorMaskedAttn(
+    elif model_name in ("RadioPriorMaskedAttn", "JanusMaskedAttn"):
+        model = JanusMaskedAttn(
             num_diseases=cfg.model.num_diseases,
             disease_names=cfg.model.get("disease_names", None),
             variant=cfg.model.variant,
@@ -194,8 +194,8 @@ def build_model(cfg: DictConfig) -> nn.Module:
             init_outside=cfg.training.get("init_outside", 0.2),
             use_gradient_checkpointing=cfg.model.get("use_gradient_checkpointing", False),
         )
-    elif model_name == "RadioPriorScalarFusion":
-        model = RadioPriorScalarFusion(
+    elif model_name in ("RadioPriorScalarFusion", "JanusScalarFusion"):
+        model = JanusScalarFusion(
             num_diseases=cfg.model.num_diseases,
             disease_names=cfg.model.get("disease_names", None),
             variant=cfg.model.variant,
@@ -212,8 +212,8 @@ def build_model(cfg: DictConfig) -> nn.Module:
             feature_stats_path=feature_stats_path,
             use_gradient_checkpointing=cfg.model.get("use_gradient_checkpointing", False),
         )
-    elif model_name == "RadioPriorScalarFusionVolume":
-        model = RadioPriorScalarFusionVolume(
+    elif model_name == "JanusScalarFusionVolume":
+        model = JanusScalarFusionVolume(
             num_diseases=cfg.model.num_diseases,
             disease_names=cfg.model.get("disease_names", None),
             variant=cfg.model.variant,
@@ -231,8 +231,8 @@ def build_model(cfg: DictConfig) -> nn.Module:
             use_gradient_checkpointing=cfg.model.get("use_gradient_checkpointing", False),
             debug=cfg.model.get("debug", False),
         )
-    elif model_name == "RadioPriorGatedFusion":
-        model = RadioPriorGatedFusion(
+    elif model_name in ("RadioPriorGatedFusion", "JanusGatedFusion"):
+        model = JanusGatedFusion(
             num_diseases=cfg.model.num_diseases,
             disease_names=cfg.model.get("disease_names", None),
             variant=cfg.model.variant,
@@ -252,8 +252,8 @@ def build_model(cfg: DictConfig) -> nn.Module:
             debug_features=cfg.model.get("debug_features", False),
             visual_pooling=cfg.model.get("visual_pooling", "masked_attn"),
         )
-    elif model_name == "RadioPriorMaskedAttnOracle":
-        model = RadioPriorMaskedAttnOracle(
+    elif model_name in ("RadioPriorMaskedAttnOracle", "JanusMaskedAttnOracle"):
+        model = JanusMaskedAttnOracle(
             num_diseases=cfg.model.num_diseases,
             num_organ_groups=cfg.model.get("num_organ_groups", 14),
             disease_names=cfg.model.get("disease_names", None),
@@ -265,8 +265,8 @@ def build_model(cfg: DictConfig) -> nn.Module:
             learn_tau=cfg.model.get("learn_tau", True),
             use_mask_bias=cfg.model.get("use_mask_bias", True),
         )
-    elif model_name == "RadioPriorScalarFusionOracle":
-        model = RadioPriorScalarFusionOracle(
+    elif model_name in ("RadioPriorScalarFusionOracle", "JanusScalarFusionOracle"):
+        model = JanusScalarFusionOracle(
             num_diseases=cfg.model.num_diseases,
             num_organ_groups=cfg.model.get("num_organ_groups", 14),
             disease_names=cfg.model.get("disease_names", None),
@@ -278,16 +278,16 @@ def build_model(cfg: DictConfig) -> nn.Module:
             learn_tau=cfg.model.get("learn_tau", True),
             use_mask_bias=cfg.model.get("use_mask_bias", True),
         )
-    elif model_name == "RadioPriorI3D_GAP":
-        model = RadioPriorI3D_GAP(
+    elif model_name in ("RadioPriorI3D_GAP", "JanusI3D_GAP"):
+        model = JanusI3D_GAP(
             num_diseases=cfg.model.num_diseases,
             disease_names=cfg.model.get("disease_names", None),
             resnet_name=cfg.model.get("resnet_name", "resnet50"),
             pretrained=cfg.model.get("pretrained", True),
             use_checkpoint=cfg.model.get("use_gradient_checkpointing", True),
         )
-    elif model_name == "RadioPriorI3D_MaskedAttn":
-        model = RadioPriorI3D_MaskedAttn(
+    elif model_name in ("RadioPriorI3D_MaskedAttn", "JanusI3D_MaskedAttn"):
+        model = JanusI3D_MaskedAttn(
             num_diseases=cfg.model.num_diseases,
             disease_names=cfg.model.get("disease_names", None),
             resnet_name=cfg.model.get("resnet_name", "resnet50"),
@@ -295,8 +295,8 @@ def build_model(cfg: DictConfig) -> nn.Module:
             use_checkpoint=cfg.model.get("use_gradient_checkpointing", True),
             feature_stats_path=feature_stats_path,
         )
-    elif model_name == "RadioPriorI3D_ScalarFusion":
-        model = RadioPriorI3D_ScalarFusion(
+    elif model_name in ("RadioPriorI3D_ScalarFusion", "JanusI3D_ScalarFusion"):
+        model = JanusI3D_ScalarFusion(
             num_diseases=cfg.model.num_diseases,
             disease_names=cfg.model.get("disease_names", None),
             resnet_name=cfg.model.get("resnet_name", "resnet50"),
@@ -350,7 +350,7 @@ def build_scheduler(optimizer: torch.optim.Optimizer, cfg: DictConfig, steps_per
     return None
 
 
-def compute_class_weights(dataset: RadioPriorDataset, device: torch.device) -> torch.Tensor:
+def compute_class_weights(dataset: JanusDataset, device: torch.device) -> torch.Tensor:
     """
     Compute per-disease class weights for weighted BCE loss.
 
@@ -358,7 +358,7 @@ def compute_class_weights(dataset: RadioPriorDataset, device: torch.device) -> t
     Ignores -1 labels.
 
     Args:
-        dataset: RadioPriorDataset
+        dataset: JanusDataset
         device: torch device
 
     Returns:
@@ -701,14 +701,14 @@ def main(cfg: DictConfig):
     use_wandb = cfg.logging.get("use_wandb", False) and WANDB_AVAILABLE and is_main_process()
     if use_wandb:
         wandb.init(
-            project=cfg.logging.get("wandb_project", "radioprior_v2"),
+            project=cfg.logging.get("wandb_project", "janus"),
             entity=cfg.logging.get("wandb_entity"),
             config=OmegaConf.to_container(cfg, resolve=True),
             name=f"{cfg.model.name}_{cfg.experiment if hasattr(cfg, 'experiment') else 'run'}",
             tags=[cfg.model.name],
         )
         print("\nWandB initialized!")
-        print(f"  Project: {cfg.logging.get('wandb_project', 'radioprior_v2')}")
+        print(f"  Project: {cfg.logging.get('wandb_project', 'janus')}")
         print(f"  Run URL: {wandb.run.get_url()}")
     elif cfg.logging.get("use_wandb", False) and not WANDB_AVAILABLE:
         print("\nWarning: wandb logging requested but wandb not installed!")
@@ -748,7 +748,8 @@ def main(cfg: DictConfig):
     # Only load features for ScalarFusion and GatedFusion models
     features_parquet = None
     feature_columns = None
-    if cfg.model.name in ["RadioPriorScalarFusion", "RadioPriorScalarFusionVolume", "RadioPriorGatedFusion", "RadioPriorI3D_ScalarFusion", "RadioPriorScalarFusionOracle"]:
+    if cfg.model.name in ["RadioPriorScalarFusion", "RadioPriorScalarFusionVolume", "RadioPriorGatedFusion", "RadioPriorI3D_ScalarFusion", "RadioPriorScalarFusionOracle",
+                          "JanusScalarFusion", "JanusScalarFusionVolume", "JanusGatedFusion", "JanusI3D_ScalarFusion", "JanusScalarFusionOracle"]:
         features_parquet = cfg.paths.get("features_parquet")
         feature_columns = cfg.model.get("feature_columns")  # Optional: specific columns to use
 
@@ -774,7 +775,7 @@ def main(cfg: DictConfig):
         print(f"  Preset: {aug_preset}")
         print(f"  Params: {aug_params}")
 
-    train_dataset = RadioPriorDataset(
+    train_dataset = JanusDataset(
         pack_root=cfg.paths.pack_root,
         labels_csv=cfg.paths.labels_csv,
         case_ids=train_ids,
@@ -787,7 +788,7 @@ def main(cfg: DictConfig):
         aug_params=aug_params,
     )
 
-    val_dataset = RadioPriorDataset(
+    val_dataset = JanusDataset(
         pack_root=cfg.paths.pack_root,
         labels_csv=cfg.paths.labels_csv,
         case_ids=val_ids,
@@ -831,7 +832,7 @@ def main(cfg: DictConfig):
         pin_memory=cfg.dataset.pin_memory,
         persistent_workers=cfg.dataset.persistent_workers,
         prefetch_factor=cfg.dataset.prefetch_factor,
-        collate_fn=radioprior_collate_fn,
+        collate_fn=janus_collate_fn,
     )
 
     val_loader = DataLoader(
@@ -843,7 +844,7 @@ def main(cfg: DictConfig):
         pin_memory=cfg.dataset.pin_memory,
         persistent_workers=cfg.dataset.persistent_workers,
         prefetch_factor=cfg.dataset.prefetch_factor,
-        collate_fn=radioprior_collate_fn,
+        collate_fn=janus_collate_fn,
     )
 
     if is_main_process():
@@ -870,7 +871,7 @@ def main(cfg: DictConfig):
     model = model.to(device)
 
     # Optionally load pretrained LR weights for scalar heads (GatedFusion with use_residual=True only)
-    if cfg.model.name == "RadioPriorGatedFusion" and cfg.model.get("load_lr_weights", False):
+    if cfg.model.name in ("RadioPriorGatedFusion", "JanusGatedFusion") and cfg.model.get("load_lr_weights", False):
         if cfg.model.get("use_residual", False):
             # use_residual=True creates separate scalar heads that can load LR weights
             if is_main_process():
@@ -983,8 +984,8 @@ def main(cfg: DictConfig):
 
         # Name-based parameter grouping (more robust than attribute-based)
         # This ensures ALL parameters are captured, including:
-        # - fusion_heads, visual_projectors, scalar_projectors (RadioPriorScalarFusion)
-        # - score_mlps (RadioPriorMaskedAttn, RadioPriorScalarFusion)
+        # - fusion_heads, visual_projectors, scalar_projectors (JanusScalarFusion)
+        # - score_mlps (JanusMaskedAttn, JanusScalarFusion)
         # - heads (all models)
         backbone_params = []
         alpha_params = []
@@ -1161,7 +1162,7 @@ def main(cfg: DictConfig):
 
         # Unfreeze scalar heads after warm-start (GatedFusion only)
         unfreeze_epoch = cfg.model.get("unfreeze_scalar_heads_epoch", 10)
-        if (cfg.model.name == "RadioPriorGatedFusion" and
+        if (cfg.model.name in ("RadioPriorGatedFusion", "JanusGatedFusion") and
             cfg.model.get("freeze_scalar_heads", False) and
             epoch == unfreeze_epoch):
             if is_main_process():
@@ -1305,10 +1306,15 @@ def main(cfg: DictConfig):
 
                 # Model name mapping for shorter filenames
                 model_name_map = {
+                    "JanusGAP": "gap",
+                    "JanusMaskedAttn": "masked_attn",
+                    "JanusScalarFusion": "scalar_fusion",
+                    "JanusGatedFusion": "gated_fusion",
+                    # Legacy names for backwards compatibility
                     "RadioPriorGAP": "gap",
                     "RadioPriorMaskedAttn": "masked_attn",
                     "RadioPriorScalarFusion": "scalar_fusion",
-                    "RadioPriorResidualCBM": "residual_cbm"
+                    "RadioPriorGatedFusion": "gated_fusion",
                 }
                 model_short = model_name_map.get(cfg.model.name, cfg.model.name.lower())
 

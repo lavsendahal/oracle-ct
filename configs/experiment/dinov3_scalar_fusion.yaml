@@ -1,10 +1,10 @@
 # @package _global_
 
-# Scalar Fusion experiment: RadioPriorScalarFusion
+# Scalar Fusion experiment: JanusScalarFusion
 # Full neuro-symbolic with visual + scalar features + learnable priors
 
 model:
-  name: RadioPriorScalarFusion
+  name: JanusScalarFusion
   num_diseases: 30
   disease_names: null
   variant: B  # S (small), B (base), or L (large)

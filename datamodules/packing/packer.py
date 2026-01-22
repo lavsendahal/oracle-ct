@@ -11,13 +11,13 @@
 #    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
-# radioprior_v2/datamodules/packing/packer.py
+# janus/datamodules/packing/packer.py
 """
-CT Pack Builder for RadioPrior Deep Learning Pipeline
+CT Pack Builder for Janus Deep Learning Pipeline
 
 This module creates standardized .pt pack files from raw NIFTI data:
 - CT image (resampled to isotropic resolution)
-- Merged organ masks (14 channels for radioprior_v1)
+- Merged organ masks (14 channels for janus_v1)
 - Anatomical landmarks (computed from segmentation)
 - Disease ROI coordinates (from pre-extracted features)
 - Metadata (spacing, volumes, border flags, body volume, organ mean HU)
@@ -51,7 +51,7 @@ USAGE:
     config = PackConfig(
         target_spacing=(1.5, 1.5, 1.5),
         target_shape=(224, 224, 224),
-        merge_name="radioprior_v1",
+        merge_name="janus_v1",
         hu_min=-1000.0,
         hu_max=1000.0,
     )
@@ -72,10 +72,10 @@ USAGE:
     torch.save(pack, "AC123abc.pt")
 
 BACKWARDS COMPATIBILITY:
-    # Legacy RadioPriorPacker API is also available
-    from datamodules.packing.packer import RadioPriorPacker
+    # Legacy JanusPacker API is also available
+    from datamodules.packing.packer import JanusPacker
 
-    packer = RadioPriorPacker(
+    packer = JanusPacker(
         target_spacing=(1.5, 1.5, 1.5),
         target_shape=(224, 224, 224),
         hu_range=(-1000, 1000),
@@ -645,14 +645,14 @@ class PackBuilder:
 
 
 # =============================================================================
-# BACKWARDS COMPATIBILITY - Legacy RadioPriorPacker API
+# BACKWARDS COMPATIBILITY - Legacy JanusPacker API
 # =============================================================================
 
-class RadioPriorPacker:
+class JanusPacker:
     """
     Legacy pack builder with simplified API.
 
-    This class provides backwards compatibility with the old RadioPriorPacker API.
+    This class provides backwards compatibility with the old JanusPacker API.
     Internally, it uses the new PackBuilder implementation.
 
     DEPRECATED: Use PackBuilder with PackConfig instead for new code.

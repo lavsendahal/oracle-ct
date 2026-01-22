@@ -1,6 +1,6 @@
-# radioprior_v2/losses.py
+# janus/losses.py
 """
-Loss functions for RadioPrior training.
+Loss functions for Janus training.
 
 Supports:
 1. Standard BCE with logits (with optional class weights)
@@ -251,7 +251,7 @@ def build_loss_from_config(cfg: Dict[str, Any]) -> nn.Module:
 
 
 if __name__ == "__main__":
-    print("RadioPrior Loss Functions")
+    print("Janus Loss Functions")
     print("=" * 60)
     print("""
 Available loss functions:

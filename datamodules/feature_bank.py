@@ -1,6 +1,6 @@
-# radioprior_v2/datamodules/feature_bank.py
+# janus/datamodules/feature_bank.py
 """
-Feature Bank for RadioPrior
+Feature Bank for Janus
 
 Handles:
 1. Selection of scalar features per disease
@@ -383,7 +383,7 @@ def compute_feature_statistics(
 
 
 if __name__ == "__main__":
-    print("Feature Bank for RadioPrior")
+    print("Feature Bank for Janus")
     print("=" * 60)
     print("""
 Key Derived Features:

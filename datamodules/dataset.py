@@ -11,9 +11,9 @@
 #    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
-# radioprior_v2/datamodules/dataset.py
+# janus/datamodules/dataset.py
 """
-RadioPrior Dataset
+Janus Dataset
 
 Loads:
 1. Pre-packed .pt files (image, masks, landmarks, disease_rois, meta)
@@ -35,9 +35,9 @@ from .augmentation import apply_augmentation
 from .roi_utils import create_disease_rois_batch
 
 
-class RadioPriorDataset(Dataset):
+class JanusDataset(Dataset):
     """
-    Dataset for RadioPrior neuro-symbolic model.
+    Dataset for Janus neuro-symbolic model.
 
     Args:
         pack_root: Directory containing .pt pack files
@@ -130,7 +130,7 @@ class RadioPriorDataset(Dataset):
             if has_pack and has_labels and has_features:
                 self.case_ids.append(case_id)
 
-        print(f"RadioPriorDataset: {len(self.case_ids)} cases with packs and labels" +
+        print(f"JanusDataset: {len(self.case_ids)} cases with packs and labels" +
               (f" and features" if self.use_features else ""))
     
     def __len__(self):
@@ -218,9 +218,9 @@ class RadioPriorDataset(Dataset):
         return self.disease_names
 
 
-def radioprior_collate_fn(batch: List[Dict]) -> Dict[str, Any]:
+def janus_collate_fn(batch: List[Dict]) -> Dict[str, Any]:
     """
-    Custom collate function for RadioPrior dataset.
+    Custom collate function for Janus dataset.
 
     Handles variable-size metadata while stacking tensors.
     Also creates disease_rois from features_row + metadata.
@@ -307,9 +307,9 @@ def create_dataloader(
     num_workers: int = 4,
     pin_memory: bool = True,
 ) -> DataLoader:
-    """Create a dataloader for RadioPrior dataset."""
+    """Create a dataloader for Janus dataset."""
 
-    dataset = RadioPriorDataset(
+    dataset = JanusDataset(
         pack_root=pack_root,
         labels_csv=labels_csv,
         case_ids=case_ids,
@@ -324,16 +324,16 @@ def create_dataloader(
         shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=pin_memory,
-        collate_fn=radioprior_collate_fn,
+        collate_fn=janus_collate_fn,
     )
 
 
 if __name__ == "__main__":
-    print("RadioPrior Dataset")
+    print("Janus Dataset")
     print("=" * 50)
     print("""
     Usage:
-        dataset = RadioPriorDataset(
+        dataset = JanusDataset(
             pack_root="/path/to/packs",
             features_parquet="/path/to/features.parquet",
             labels_csv="/path/to/labels.csv",

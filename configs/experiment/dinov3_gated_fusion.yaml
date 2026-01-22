@@ -1,6 +1,6 @@
 # @package _global_
 
-# Anatomically Guided Gating experiment: RadioPriorGatedFusion
+# Anatomically Guided Gating experiment: JanusGatedFusion
 # Novel gating mechanism where scalar features modulate visual features:
 # - Visual features (768d) from masked attention pooling
 # - Scalar features → Gate projector → sigmoid gate (0-1 per dimension)
@@ -13,7 +13,7 @@
 # - Fewer parameters (no need for fusion MLP)
 
 model:
-  name: RadioPriorGatedFusion
+  name: JanusGatedFusion
   # Choose how visual features are pooled:
   # - masked_attn: disease-specific organ-masked attention pooling (default)
   # - gap: global average pooling over all tokens/tri-slices (no organ masking)

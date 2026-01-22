@@ -12,9 +12,9 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 #!/usr/bin/env python3
-# radioprior_v2/datamodules/packing/prepack.py
+# janus/datamodules/packing/prepack.py
 """
-Batch Pack Building CLI for RadioPrior Pipeline
+Batch Pack Building CLI for Janus Pipeline
 
 This script processes multiple CT scans in parallel, creating .pt pack files
 for the deep learning training pipeline.
@@ -366,7 +366,7 @@ def save_index(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Batch pack building for RadioPrior pipeline",
+        description="Batch pack building for Janus pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     
@@ -393,7 +393,7 @@ def main():
         "--features_parquet", "-f",
         type=Path,
         default=None,
-        help="Optional: Parquet file with pre-extracted RadioPrior features"
+        help="Optional: Parquet file with pre-extracted Janus features"
     )
     
     # Output

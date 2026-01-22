@@ -1,10 +1,10 @@
 # @package _global_
 
-# Masked Attention experiment: RadioPriorMaskedAttn
+# Masked Attention experiment: JanusMaskedAttn
 # Organ-specific attention per disease with learnable priors
 
 model:
-  name: RadioPriorMaskedAttn
+  name: JanusMaskedAttn
   num_diseases: 30
   disease_names: null  # null = use first 30 from ALL_DISEASES
   variant: B  # S (small), B (base), or L (large)

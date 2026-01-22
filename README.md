@@ -16,24 +16,24 @@ hepatomegaly, splenomegaly, cardiomegaly, prostatomegaly, hepatic_steatosis, ost
 
 ## Model Architectures
 
-### 1. RadioPriorGAP (Baseline)
+### 1. JanusGAP (Baseline)
 Pure neural baseline without anatomical priors.
 - DINOv3 backbone → Global Average Pooling → Classification heads
 - Config: `experiment=dinov3_baseline_gap`
 
-### 2. RadioPriorMaskedAttn (Anatomical Attention)
+### 2. JanusMaskedAttn (Anatomical Attention)
 Disease-specific organ-masked attention pooling.
 - Attention strategies: single, union, comparative, roi, global
 - Learnable temperature (tau) and mask bias parameters
 - Config: `experiment=dinov3_masked_attn`
 
-### 3. RadioPriorScalarFusion (Visual + Scalar Concatenation)
+### 3. JanusScalarFusion (Visual + Scalar Concatenation)
 Fuses visual and scalar features via concatenation.
 - Visual projector (768→256d) + Scalar projector (N→256d)
 - Fusion MLP for final classification
 - Config: `experiment=dinov3_scalar_fusion`
 
-### 4. RadioPriorGatedFusion (Advanced Gating)
+### 4. JanusGatedFusion (Advanced Gating)
 Scalar features gate visual features (element-wise multiplication).
 - Visual pooling: `masked_attn` or `gap`
 - Optional dual-head mode with learnable mixture weights
@@ -122,7 +122,7 @@ paths:
 #### Model Settings (`configs/experiment/*.yaml`)
 ```yaml
 model:
-  name: RadioPriorGatedFusion
+  name: JanusGatedFusion
   variant: B                          # S (small), B (base), L (large)
   visual_pooling: masked_attn         # masked_attn | gap
   use_residual: false                 # Dual-head mode
@@ -299,10 +299,10 @@ janus/
 │       └── dinov3_gated_fusion.yaml
 │
 ├── models/
-│   └── radioprior_model.py     # All model architectures
+│   └── janus_model.py          # All model architectures
 │
 ├── datamodules/
-│   ├── dataset.py              # RadioPriorDataset
+│   ├── dataset.py              # JanusDataset
 │   ├── feature_bank.py         # Scalar feature loading/normalization
 │   └── augmentation.py         # Data augmentation
 │

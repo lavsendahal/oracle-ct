@@ -1,11 +1,12 @@
-# radioprior_v2/__init__.py
+# janus/__init__.py
 """
-RadioPrior v2: Neuro-Symbolic CT Disease Classification
+Janus: Neuro-Symbolic CT Disease Classification
 
-Three progressive model variants:
+Four progressive model variants:
 1. GAP Baseline: DINOv3 + Global Average Pooling
 2. Masked Attention: + Organ-specific attention (comparative for steatosis)
 3. Scalar Fusion: + Body-normalized volumes, HU comparisons, diameter ratios
+4. Gated Fusion: Scalar features gate visual features
 
 Key Features:
 - 30 disease classification from CT scans
@@ -16,11 +17,11 @@ Key Features:
 - SBO diameter ratio (small_bowel / colon)
 
 Usage:
-    from radioprior_v2.models import build_model_from_config
-    from radioprior_v2.datamodules import RadioPriorDataset, FeatureBank
-    
+    from janus.models import build_model_from_config
+    from janus.datamodules import JanusDataset, FeatureBank
+
     model = build_model_from_config({
-        "model_type": "scalar_fusion",
+        "model_type": "gated_fusion",
         "num_diseases": 30,
     })
 """

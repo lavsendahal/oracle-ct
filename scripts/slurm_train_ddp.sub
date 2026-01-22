@@ -37,7 +37,7 @@ echo "  MKL_NUM_THREADS: $MKL_NUM_THREADS"
 
 
 echo "========================================"
-echo "RadioPrior v2 - Multi-GPU Training"
+echo "Janus - Multi-GPU Training"
 echo "========================================"
 echo "Number of GPUs: $NGPUS"
 echo "Arguments: $@"

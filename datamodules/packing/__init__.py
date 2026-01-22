@@ -1,4 +1,4 @@
-# radioprior_v2/datamodules/packing/__init__.py
+# janus/datamodules/packing/__init__.py
 """
 Pack Building Utilities
 
@@ -11,12 +11,12 @@ from raw NIFTI CT data:
 Example usage:
 
     from datamodules.packing import PackBuilder, PackConfig
-    
+
     config = PackConfig(
         target_spacing=(1.5, 1.5, 1.5),
-        merge_name="radioprior_v1",
+        merge_name="janus_v1",
     )
-    
+
     builder = PackBuilder(config=config)
     pack = builder.build(
         case_id="AC123",
@@ -28,16 +28,20 @@ Example usage:
 from .packer import (
     PackBuilder,
     PackConfig,
-    RadioPriorPacker,
+    JanusPacker,
     build_pack,
     load_pack,
     estimate_pack_size_mb,
 )
 
+# Legacy alias for backwards compatibility
+RadioPriorPacker = JanusPacker
+
 __all__ = [
     "PackBuilder",
     "PackConfig",
-    "RadioPriorPacker",
+    "JanusPacker",
+    "RadioPriorPacker",  # Legacy alias
     "build_pack",
     "load_pack",
     "estimate_pack_size_mb",

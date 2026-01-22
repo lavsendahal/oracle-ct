@@ -1,6 +1,6 @@
-# radioprior_v2/datamodules/class_map.py
+# janus/datamodules/class_map.py
 """
-TotalSegmentator to RadioPrior organ mapping.
+TotalSegmentator to Janus organ mapping.
 Maps 117 TotalSeg labels -> 19 organ channels (14 organs + 5 computed spaces)
 """
 
@@ -123,6 +123,10 @@ def get_organ_id_map(scheme="totalseg", merge_name="radioprior_v1", organs=None)
 RADIOPRIOR_V1_MERGE = ORGAN_CHANNELS
 RADIOPRIOR_V1_CHANNEL_LIST = ORGAN_NAMES
 RADIOPRIOR_V1_ORGANS = ORGAN_NAMES
+
+# Janus aliases (preferred)
+JANUS_V1_CHANNEL_LIST = ORGAN_NAMES
+JANUS_V1_ORGANS = ORGAN_NAMES
 KIDNEYS_CHANNEL_IDX = KIDNEYS_CH
 LUNGS_CHANNEL_IDX = LUNGS_CH
 LIVER_CHANNEL_IDX = LIVER_CH

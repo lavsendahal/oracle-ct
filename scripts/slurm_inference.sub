@@ -40,7 +40,7 @@ echo "  MKL_NUM_THREADS: $MKL_NUM_THREADS"
 
 
 echo "========================================"
-echo "RadioPrior v2 - Multi-GPU INFERENCE"
+echo "Janus - Multi-GPU INFERENCE"
 echo "========================================"
 echo "Number of GPUs: $NGPUS"
 echo "Arguments: $@"

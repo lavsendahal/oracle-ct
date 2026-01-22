@@ -1,11 +1,11 @@
-# radioprior_v2/models/__init__.py
-"""RadioPrior Model Components"""
+# janus/models/__init__.py
+"""Janus Model Components"""
 
-from .radioprior_model import (
-    RadioPriorGAP,
-    RadioPriorMaskedAttn,
-    RadioPriorScalarFusion,
+from .janus_model import (
+    JanusGAP,
+    JanusMaskedAttn,
+    JanusScalarFusion,
+    JanusGatedFusion,
     build_model_from_config,
 )
-
 
