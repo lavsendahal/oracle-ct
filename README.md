@@ -370,9 +370,10 @@ Ensure validation dataset size is divisible by (batch_size × num_gpus) or the c
 
 If you use this code, please cite:
 ```
-
+Manuscript in preparation - citation will be added upon publication.
 ```
 
 ## License
 
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
