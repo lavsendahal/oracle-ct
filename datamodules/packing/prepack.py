@@ -25,7 +25,7 @@ USAGE:
         --images_root /path/to/images \
         --segs_root /path/to/segmentations \
         --output_dir /path/to/packs \
-        --features_parquet /path/to/radioprior_features_v1.parquet
+        --features_parquet /path/to/janus_features_v1.parquet
 
     # With body masks
     python prepack.py \
@@ -442,8 +442,8 @@ def main():
     parser.add_argument(
         "--merge_name",
         type=str,
-        default="radioprior_v1",
-        help="Organ merge profile name (default: radioprior_v1)"
+        default="janus_v1",
+        help="Organ merge profile name (default: janus_v1)"
     )
     parser.add_argument(
         "--workers", "-w",

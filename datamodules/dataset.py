@@ -41,7 +41,7 @@ class JanusDataset(Dataset):
 
     Args:
         pack_root: Directory containing .pt pack files
-        labels_csv: Path to labels CSV (columns: case_id, disease1, disease2, ...)
+        labels_csv: Path to labels CSV (columns: study id, disease1, disease2, ...)
         case_ids: List of case IDs to use (required for train/val/test splits)
         features_parquet: Optional path to features parquet file (only for ScalarFusion model)
         feature_columns: Optional list of specific feature columns to use (filters parquet)
@@ -110,12 +110,12 @@ class JanusDataset(Dataset):
 
         # Load labels
         self.labels_df = pd.read_csv(labels_csv)
-        self.labels_df = self.labels_df.set_index("case_id")
+        self.labels_df = self.labels_df.set_index("study id")
 
         # Determine disease names
         if disease_names is None:
-            # Use all columns except case_id as disease labels
-            disease_names = [c for c in self.labels_df.columns if c != "case_id"]
+            # Use all columns as disease labels (study id is already the index)
+            disease_names = list(self.labels_df.columns)
         self.disease_names = disease_names
         self.num_diseases = len(disease_names)
 

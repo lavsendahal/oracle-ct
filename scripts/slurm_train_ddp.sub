@@ -4,8 +4,8 @@
 ##SBATCH --nodelist=node001
 #SBATCH --gres=gpu:a6000:2
 #SBATCH --cpus-per-task=24
-#SBATCH --output=$IPREDICT_ROOT/slurm_logs/visual_pooling_gap_gated_fusion_output-residual-true-%j.out
-#SBATCH --error=$IPREDICT_ROOT/slurm_logs/visual_pooling_gap_gated_fusion_error-residual-true-%j.out
+#SBATCH --output=/home/ld258/ipredict/slurm_logs/nature_expt/visual_pooling_gap_gated_fusion_output-%j.out
+#SBATCH --error=/home/ld258/ipredict/slurm_logs/nature_expt/visual_pooling_gap_gated_fusion_error-%j.out
 
 # Default: use all available GPUs
 NGPUS=${NGPUS:-$(nvidia-smi -L | wc -l)}

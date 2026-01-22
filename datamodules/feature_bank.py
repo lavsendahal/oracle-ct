@@ -164,7 +164,7 @@ class FeatureBank:
         """
         Get scalar features for a specific disease.
 
-        Matches the scalar-only baseline used in `radioprior_v2/train_ml_baseline.py` (Option A):
+        Matches the scalar-only baseline used in `janus/train_ml_baseline.py` (Option A):
         - Z-score normalize using `feature_stats.json` mean/std (when available)
         - Missing values remain NaN through normalization, then are set to 0.0
           (mean-imputation in standardized space)

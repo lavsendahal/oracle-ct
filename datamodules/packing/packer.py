@@ -71,8 +71,7 @@ USAGE:
 
     torch.save(pack, "AC123abc.pt")
 
-BACKWARDS COMPATIBILITY:
-    # Legacy JanusPacker API is also available
+SIMPLIFIED API:
     from datamodules.packing.packer import JanusPacker
 
     packer = JanusPacker(
@@ -105,7 +104,7 @@ from ..class_map import (
     merge_kidney_cysts_to_masks,
     compute_pleural_space_mask,
     compute_all_dilated_spaces,
-    RADIOPRIOR_V1_CHANNEL_LIST,
+    JANUS_V1_CHANNEL_LIST,
 )
 
 
@@ -126,8 +125,8 @@ class PackConfig:
     hu_max: float = 1000.0
 
     # Organ merging
-    merge_name: str = "radioprior_v1"
-    organs: List[str] = field(default_factory=lambda: RADIOPRIOR_V1_CHANNEL_LIST.copy())
+    merge_name: str = "janus_v1"
+    organs: List[str] = field(default_factory=lambda: JANUS_V1_CHANNEL_LIST.copy())
 
     # Output precision
     image_dtype: str = "float16"  # float16 or float32
@@ -645,17 +644,14 @@ class PackBuilder:
 
 
 # =============================================================================
-# BACKWARDS COMPATIBILITY - Legacy JanusPacker API
+# JanusPacker - Simplified API
 # =============================================================================
 
 class JanusPacker:
     """
-    Legacy pack builder with simplified API.
+    Pack builder with simplified API.
 
-    This class provides backwards compatibility with the old JanusPacker API.
-    Internally, it uses the new PackBuilder implementation.
-
-    DEPRECATED: Use PackBuilder with PackConfig instead for new code.
+    Internally uses the PackBuilder implementation with sensible defaults.
     """
 
     def __init__(
@@ -667,7 +663,7 @@ class JanusPacker:
         mask_dtype: str = "uint8",
     ):
         """
-        Initialize legacy packer.
+        Initialize packer.
 
         Args:
             target_spacing: Target voxel spacing in mm
@@ -695,7 +691,7 @@ class JanusPacker:
         body_mask_path: Optional[Union[str, Path]] = None,
         kidney_cyst_path: Optional[Union[str, Path]] = None,
     ) -> Dict[str, Any]:
-        """Build pack with legacy API."""
+        """Build pack from CT image and segmentation."""
         # Update features_df if provided
         if features_df is not None:
             self._builder.features_df = features_df

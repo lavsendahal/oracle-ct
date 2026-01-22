@@ -11,7 +11,7 @@
 #    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
-# radioprior_v2/datamodules/pleural_space.py
+# janus/datamodules/pleural_space.py
 """
 Pleural Space Generation
 

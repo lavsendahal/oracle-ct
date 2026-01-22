@@ -54,7 +54,7 @@ torchrun \
     --nproc_per_node=$NGPUS \
     $IPREDICT_ROOT/neuro_symbolic/janus/inference.py \
     experiment=dinov3_gated_fusion \
-    paths.checkpoint=$IPREDICT_ROOT/neuro_symbolic/outputs/RadioPriorGatedFusion/2026-01-20_07-02-23_seed25/checkpoints/radiopriorgatedfusion_best_macro_auc0.8832.pt \
+    paths.checkpoint=$IPREDICT_ROOT/neuro_symbolic/outputs/JanusGatedFusion/YOUR_RUN_DIR/checkpoints/YOUR_CHECKPOINT.pt \
     logging.use_wandb=false \
     training.use_ddp=true \
     "$@"

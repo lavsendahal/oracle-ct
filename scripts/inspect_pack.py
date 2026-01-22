@@ -267,21 +267,21 @@ if __name__ == "__main__":
 
 
 # # Test a single pack
-# python radioprior_v2/scripts/inspect_pack.py \
-#     --pack_path /cachedata/ld258/radiopriors/packs/case001.pt \
-#     --parquet /scratch/railabs/ld258/output/ct_triage/second_project/radiopriors/radioprior_features_v1.parquet \
+# python janus/scripts/inspect_pack.py \
+#     --pack_path /cachedata/ld258/janus/packs/case001.pt \
+#     --parquet /scratch/railabs/ld258/output/ct_triage/second_project/janus/janus_features_v1.parquet \
 #     --output_dir /tmp/test_pack_output
 
 # # Test multiple packs (limit to 5)
-# python /home/ld258/ipredict/neuro_symbolic/radioprior_v2/scripts/inspect_pack.py \
-#     --pack_dir /cachedata/ld258/radiopriors/packs \
-#     --parquet /scratch/railabs/ld258/output/ct_triage/second_project/radiopriors/radioprior_features_v2.parquet \
-#     --output_dir /scratch/railabs/ld258/output/ct_triage/second_project/radioprior_v2/nifti_vis_v2 \
+# python /home/ld258/ipredict/neuro_symbolic/janus/scripts/inspect_pack.py \
+#     --pack_dir /cachedata/ld258/janus/packs \
+#     --parquet /scratch/railabs/ld258/output/ct_triage/second_project/janus/janus_features_v2.parquet \
+#     --output_dir /scratch/railabs/ld258/output/ct_triage/second_project/janus/nifti_vis_v2 \
 #     --limit 5
 
 # # Just print summary without exporting NIFTI
-# python radioprior_v2/scripts/inspect_pack.py \
-#     --pack_path /cachedata/ld258/radiopriors/packs/case001.pt \
-#     --parquet /scratch/railabs/ld258/output/ct_triage/second_project/radiopriors/radioprior_features_v1.parquet \
+# python janus/scripts/inspect_pack.py \
+#     --pack_path /cachedata/ld258/janus/packs/case001.pt \
+#     --parquet /scratch/railabs/ld258/output/ct_triage/second_project/janus/janus_features_v1.parquet \
 #     --output_dir /tmp/test_pack_output \
 #     --summary_only

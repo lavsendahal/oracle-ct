@@ -106,7 +106,7 @@ PERICARDIAL_SPACE_CH = 18
 SUBCUTANEOUS_SPACE_CH = 19
 
 
-def get_organ_id_map(scheme="totalseg", merge_name="radioprior_v1", organs=None):
+def get_organ_id_map(scheme="totalseg", merge_name="janus_v1", organs=None):
     """Map TotalSeg label IDs -> organ names. Returns dict {label_id: organ_name}."""
     organ_id_map = {}
     organ_set = set(organs) if organs else None
