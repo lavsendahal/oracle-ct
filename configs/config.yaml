@@ -10,31 +10,22 @@ defaults:
 # NOTE: Use ${oc.env:VAR_NAME} for environment variables (not $VAR or ${VAR})
 paths:
   # LR pipeline outputs (REQUIRED - from macro-radiomics/ml-examples run)
-  lr_run_dir: ${oc.env:SCRATCH}/output/ct_triage/second_project/macroradiomics/merlin/v1_new_features
+  lr_run_dir: /scratch/railabs/ld258/output/ct_triage/macroradiomics/merlin/ml_runs/v1/
   disease_config: ${paths.lr_run_dir}/disease_config_final.py
   feature_stats: ${paths.lr_run_dir}/feature_stats.json
   lr_weights: ${paths.lr_run_dir}/model_weights.json
 
   # # Data paths for Merlin dataset
-  pack_root: /cachedata/${oc.env:NETID}/merlin/packs
-  features_parquet: ${oc.env:SCRATCH}/output/ct_triage/second_project/macroradiomics/merlin/features_combined.parquet
-  labels_csv: ${oc.env:SCRATCH}/dataset/merlin/merlinabdominalctdataset/zero_shot_findings_disease_cls.csv
-  train_ids: ${oc.env:IPREDICT_ROOT}/neuro_symbolic/splits/train_ids.txt
-  val_ids: ${oc.env:IPREDICT_ROOT}/neuro_symbolic/splits/val_ids.txt
-  test_ids: ${oc.env:IPREDICT_ROOT}/neuro_symbolic/splits/val_ids.txt
-
-
-  # Data paths for Merlin dataset
-  # pack_root: /cachedata/${oc.env:NETID}/duke/packs
-  # features_parquet: ${oc.env:SCRATCH}/output/ct_triage/second_project/macroradiomics/duke/features_combined.parquet
-  # labels_csv: ${oc.env:SCRATCH}/ml-runs/duke/splits/duke_labels_case_id.csv
-  # train_ids: ${oc.env:IPREDICT_ROOT}/neuro_symbolic/splits/train_ids.txt
-  # val_ids: ${oc.env:IPREDICT_ROOT}/neuro_symbolic/splits/val_ids.txt
-  # test_ids: ${oc.env:SCRATCH}/ml-runs/duke/splits/duke_ids_full.txt
+  pack_root: /cachedata/ld258/janus/merlin/packs
+  features_parquet: /scratch/railabs/ld258/output/ct_triage/macroradiomics/merlin/features/features_combined.parquet
+  labels_csv: /scratch/railabs/ld258/output/ct_triage/macroradiomics/merlin/zero_shot_findings_disease_cls.csv
+  train_ids: /home/ld258/ipredict/janus/splits/train_ids.txt
+  val_ids: /home/ld258/ipredict/janus/splits/val_ids.txt
+  test_ids: /home/ld258/ipredict/janus/splits/val_ids.txt
 
   # Output (on scratch, not in code directory)
   checkpoint: null
-  output_root: ${oc.env:SCRATCH}/output/ct_triage/second_project/janus_runs
+  output_root: /scratch/railabs/ld258/output/ct_triage/janus/runs/
 
 # Dataset
 dataset:
