@@ -3,7 +3,7 @@
 
 defaults:
   - _self_
-  - experiment: dinov3_gated_fusion
+  - experiment: JanusMaskedAttn
 
 # Paths
 # LR Run Directory - contains disease_config_final.py, feature_stats.json, model_weights.json
@@ -18,7 +18,7 @@ paths:
   # # Data paths for Merlin dataset
   pack_root: /cachedata/ld258/janus/merlin/packs
   features_parquet: /scratch/railabs/ld258/output/ct_triage/macroradiomics/merlin/features/features_combined.parquet
-  labels_csv: /scratch/railabs/ld258/output/ct_triage/macroradiomics/merlin/zero_shot_findings_disease_cls.csv
+  labels_csv: /scratch/railabs/ld258/dataset/merlin/merlinabdominalctdataset/zero_shot_findings_disease_cls.csv
   train_ids: /home/ld258/ipredict/janus/splits/train_ids.txt
   val_ids: /home/ld258/ipredict/janus/splits/val_ids.txt
   test_ids: /home/ld258/ipredict/janus/splits/val_ids.txt

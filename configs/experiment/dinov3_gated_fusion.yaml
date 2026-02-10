@@ -32,6 +32,7 @@ model:
   unfreeze_scalar_heads_epoch: 5  # Unfreeze at epoch 10 for fine-tuning
   debug_scalar_only: false  # If true, bypass visual pathway (LR reproduction)
   debug_features: false  # If true, print first-forward feature debug
+  allow_comparative: false  # Set true for comparative attention (e.g., steatosis: liver vs spleen → 1536d)
 
 training:
   max_epochs: 20

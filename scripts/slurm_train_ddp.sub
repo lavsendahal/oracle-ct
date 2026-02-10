@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH --job-name=TRAIN
+#SBATCH --job-name=MASKEDATTN
 #SBATCH --nodes=1
-#SBATCH --nodelist=node003
+#SBATCH --nodelist=node001
 #SBATCH --gres=gpu:a6000:4
 #SBATCH --cpus-per-task=64
-#SBATCH --output=/home/ld258/ipredict/slurm_logs/miccai/janus-gated-output-%j.out
-#SBATCH --error=/home/ld258/ipredict/slurm_logs/miccai/janus-gated-error-%j.out
+#SBATCH --output=/home/ld258/ipredict/slurm_logs/miccai/janus-MASKEDATTN-output-%j.out
+#SBATCH --error=/home/ld258/ipredict/slurm_logs/miccai/janus-MASKEDATTN-error-%j.out
 
 # Default: use all available GPUs
 NGPUS=${NGPUS:-$(nvidia-smi -L | wc -l)}

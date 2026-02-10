@@ -1164,6 +1164,7 @@ class JanusGatedFusion(nn.Module):
         debug_scalar_only: bool = False,
         debug_features: bool = False,
         visual_pooling: str = "masked_attn",  # "masked_attn" or "gap"
+        allow_comparative: bool = False,  # Set True to use comparative attention for steatosis
     ):
         super().__init__()
 
@@ -1178,6 +1179,7 @@ class JanusGatedFusion(nn.Module):
         self.variant = variant.upper()
         self.use_residual = use_residual
         self.visual_pooling = visual_pooling
+        self.allow_comparative = allow_comparative
 
         if self.visual_pooling not in {"masked_attn", "gap"}:
             raise ValueError(f"Invalid visual_pooling='{self.visual_pooling}'. Must be 'masked_attn' or 'gap'.")
@@ -1261,12 +1263,19 @@ class JanusGatedFusion(nn.Module):
             num_base_features = len(config.scalar_features) + len(config.derived_features) if config else 0
             num_scalars = num_base_features  # IDENTICAL to LR: no presence indicators
 
+            # Determine visual dimension (may be larger for comparative diseases)
+            if self.allow_comparative and config and config.attention_strategy == "comparative":
+                num_organs = len(config.attention_organs)
+                visual_dim = self.hidden_dim * num_organs  # e.g., 1536 for steatosis (liver + spleen)
+            else:
+                visual_dim = self.hidden_dim  # 768
+
             # BUGFIX: Only register modules if scalars exist (ModuleDict cannot store None)
             if num_scalars > 0:
                 # Create the Anatomical Gate
-                # Projects scalars (e.g., 10) -> visual dim (768)
+                # Projects scalars (e.g., 10) -> visual dim (768 or 1536 for comparative)
                 self.gating_modules[disease] = AnatomicallyGuidedGate(
-                    visual_dim=self.hidden_dim,
+                    visual_dim=visual_dim,
                     scalar_dim=num_scalars
                 )
 
@@ -1275,7 +1284,7 @@ class JanusGatedFusion(nn.Module):
                 if self.use_residual:
                     # Visual head: gated visual features -> logit
                     # Initialize to output zero so it doesn't interfere with pretrained LR baseline
-                    self.heads_visual[disease] = nn.Linear(self.hidden_dim, 1)
+                    self.heads_visual[disease] = nn.Linear(visual_dim, 1)
                     nn.init.zeros_(self.heads_visual[disease].weight)
                     nn.init.zeros_(self.heads_visual[disease].bias)
 
@@ -1286,12 +1295,12 @@ class JanusGatedFusion(nn.Module):
                     self.alpha_scalar[disease] = nn.Parameter(torch.tensor(1.0))
                 else:
                     # No residual: single head on gated visual only
-                    self.heads_visual[disease] = nn.Linear(self.hidden_dim, 1)
+                    self.heads_visual[disease] = nn.Linear(visual_dim, 1)
                     # Note: heads_scalar not registered for this disease (no residual)
             else:
                 # No scalars: visual-only head
                 # Note: gating_modules, heads_scalar not registered for this disease
-                self.heads_visual[disease] = nn.Linear(self.hidden_dim, 1)
+                self.heads_visual[disease] = nn.Linear(visual_dim, 1)
 
         residual_str = " + Residual (Dual-Head)" if self.use_residual else ""
         pooling_str = "MaskedAttn" if self.visual_pooling == "masked_attn" else "GAP"
@@ -1494,10 +1503,36 @@ class JanusGatedFusion(nn.Module):
                 visual_features = pooled
             else:
                 attn_mask = get_attention_mask_for_disease(
-                    # GatedFusion does not implement comparative multi-stream pooling.
-                    # Fall back to union masking for comparative diseases.
-                    disease, masks, disease_rois, meta, device, allow_comparative=False
+                    # Note: GatedFusion uses allow_comparative from config.
+                    # When True, comparative diseases (e.g., steatosis) get separate organ masks.
+                    disease, masks, disease_rois, meta, device, allow_comparative=self.allow_comparative
                 )
+
+                # Handle comparative attention (list of masks) vs single mask
+                if isinstance(attn_mask, list):
+                    # COMPARATIVE: Pool each organ separately and concatenate
+                    pooled_organs = []
+                    for organ_mask in attn_mask:
+                        mask_tri = masks_3d_to_tri(organ_mask, self.tri_stride)
+                        mask_tri = F.interpolate(
+                            mask_tri.view(B * T, 1, H, W),
+                            size=(self.image_size, self.image_size), mode="nearest"
+                        ).view(B, T, self.image_size, self.image_size)
+                        organ_pooled = masked_attention_pool(
+                            tokens, mask_tri, self.score_mlps[disease],
+                            tau=0.2 + 1.8 * torch.sigmoid(self.temp_logit[disease]) if self.learn_tau else self.fixed_tau,
+                            bias_in=self.inside_logit[disease] if self.use_mask_bias else None,
+                            bias_out=self.outside_logit[disease] if self.use_mask_bias else None
+                        )
+                        pooled_organs.append(organ_pooled)
+                    visual_features = torch.cat(pooled_organs, dim=1)  # [B, hidden_dim * num_organs]
+                    # Skip the regular pooling code below
+                    # Note: When comparative=True, visual_features is 1536d for steatosis
+                else:
+                    # SINGLE/UNION/ROI: Continue with regular pooling below
+                    pass
+
+            if self.visual_pooling != "gap" and not isinstance(attn_mask, list):
                 # Get learnable priors for this disease
                 bias_in = self.inside_logit[disease] if self.use_mask_bias else None
                 bias_out = self.outside_logit[disease] if self.use_mask_bias else None

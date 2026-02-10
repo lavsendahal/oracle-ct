@@ -193,6 +193,7 @@ def build_model(cfg: DictConfig) -> nn.Module:
             init_inside=cfg.training.get("init_inside", 0.8),
             init_outside=cfg.training.get("init_outside", 0.2),
             use_gradient_checkpointing=cfg.model.get("use_gradient_checkpointing", False),
+            allow_comparative=cfg.model.get("allow_comparative", False),  # False for fair comparison with GatedFusion
         )
     elif model_name == "JanusScalarFusion":
         model = JanusScalarFusion(
@@ -251,6 +252,7 @@ def build_model(cfg: DictConfig) -> nn.Module:
             debug_scalar_only=cfg.model.get("debug_scalar_only", False),
             debug_features=cfg.model.get("debug_features", False),
             visual_pooling=cfg.model.get("visual_pooling", "masked_attn"),
+            allow_comparative=cfg.model.get("allow_comparative", False),  # Set True for comparative attention
         )
     elif model_name == "JanusMaskedAttnOracle":
         model = JanusMaskedAttnOracle(
