@@ -589,6 +589,7 @@ class JanusMaskedAttn(nn.Module):
         init_inside: float = 0.8,
         init_outside: float = 0.2,
         use_gradient_checkpointing: bool = False,
+        allow_comparative: bool = False,  # Set False for fair comparison with GatedFusion
     ):
         super().__init__()
 
@@ -601,6 +602,7 @@ class JanusMaskedAttn(nn.Module):
         self.fixed_tau = fixed_tau
         self.use_mask_bias = use_mask_bias
         self.variant = variant.upper()
+        self.allow_comparative = allow_comparative
 
         # Get DINOv3 model ID from variant
         if self.variant not in DINOV3_HF_IDS:
@@ -654,13 +656,16 @@ class JanusMaskedAttn(nn.Module):
                 self.outside_logit[disease] = nn.Parameter(torch.tensor(to_logit(init_outside)))
 
             if self.learn_tau:
-                # Initialize temperature logit (will be mapped to [0.2, 2.0] range)
-                self.temp_logit[disease] = nn.Parameter(torch.tensor(to_logit(init_tau)))
+                # BUGFIX: Use inverse sigmoid to correctly initialize temperature
+                # Old: to_logit(0.7) produces tau≈1.46 (WRONG!)
+                # New: inv_sigmoid_temp(0.7) produces tau=0.7 (CORRECT!)
+                self.temp_logit[disease] = nn.Parameter(torch.tensor(inv_sigmoid_temp(init_tau)))
 
             # Check if comparative strategy (concatenates multiple organ features)
+            # Only use comparative if allow_comparative=True (for fair ablation with GatedFusion)
             disease_configs = get_all_disease_configs()
             config = disease_configs.get(disease)
-            if config and config.attention_strategy == "comparative":
+            if self.allow_comparative and config and config.attention_strategy == "comparative":
                 # Comparative: concatenate features from N organs → N * hidden_dim input
                 num_organs = len(config.attention_organs)
                 head_input_dim = self.hidden_dim * num_organs
@@ -727,7 +732,7 @@ class JanusMaskedAttn(nn.Module):
 
         for disease in self.disease_names:
             attn_mask = get_attention_mask_for_disease(
-                disease, masks, disease_rois, meta, device, allow_comparative=True
+                disease, masks, disease_rois, meta, device, allow_comparative=self.allow_comparative
             )
             # Get learnable priors for this disease
             bias_in = self.inside_logit[disease] if self.use_mask_bias else None
