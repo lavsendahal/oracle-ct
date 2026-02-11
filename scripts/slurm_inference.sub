@@ -2,11 +2,11 @@
 #SBATCH --job-name=INFERENCE
 #SBATCH --nodes=1
 ##SBATCH --nodelist=node001
-#SBATCH --gres=gpu:a6000:4
-#SBATCH --cpus-per-task=64
+#SBATCH --gres=gpu:a6000:2
+#SBATCH --cpus-per-task=32
 # NOTE: SBATCH directives don't expand env vars - use absolute paths or %x/%j only
-#SBATCH --output=/home/ld258/ipredict/slurm_logs/INFER_output-%j.out
-#SBATCH --error=/home/ld258/ipredict/slurm_logs/INFER_error-%j.out
+#SBATCH --output=/home/ld258/ipredict/slurm_logs/paper2_and_3/INFER_merlin-output-%j.out
+#SBATCH --error=/home/ld258/ipredict/slurm_logs/paper2_and_3/INFER_merlin-error-%j.out
 
 
 # Default: use all available GPUs
@@ -47,15 +47,30 @@ echo "Arguments: $@"
 echo "========================================"
 echo ""
 
+# Configuration - SET THESE BEFORE RUNNING or pass as environment variables
+# Example: DATASET=duke EXPERIMENT=dinov3_gated_fusion sbatch slurm_inference.sub
+DATASET=${DATASET:-duke}           # merlin or duke
+EXPERIMENT=${EXPERIMENT:-dinov3_masked_attn}
+CHECKPOINT=${CHECKPOINT:-/scratch/railabs/ld258/output/ct_triage/janus/runs/JanusMaskedAttn/2026-02-10_12-43-43_seed25/checkpoints/masked_attn_best_macro_auc0.8667.pt}
+
+echo "Dataset: $DATASET"
+echo "Experiment: $EXPERIMENT"
+echo "Checkpoint: $CHECKPOINT"
+echo ""
+
 # Launch with torchrun (recommended for PyTorch >= 1.10)
 torchrun \
     --standalone \
     --nnodes=1 \
     --nproc_per_node=$NGPUS \
-    $IPREDICT_ROOT/neuro_symbolic/janus/inference.py \
-    experiment=dinov3_gated_fusion \
-    paths.checkpoint=$IPREDICT_ROOT/neuro_symbolic/outputs/JanusGatedFusion/YOUR_RUN_DIR/checkpoints/YOUR_CHECKPOINT.pt \
+    /home/ld258/ipredict/janus/inference.py \
+    dataset=$DATASET \
+    experiment=$EXPERIMENT \
+    paths.checkpoint=$CHECKPOINT \
     logging.use_wandb=false \
     training.use_ddp=true \
     "$@"
+
+
+
 

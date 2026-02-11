@@ -1,0 +1,19 @@
+# @package _global_
+# Duke Dataset Configuration
+# External validation dataset (test only)
+
+paths:
+  # Data packs (preprocessed CT volumes)
+  pack_root: /cachedata/ld258/duke/packs
+
+  # Scalar features from radiomics pipeline
+  features_parquet: /scratch/railabs/ld258/output/ct_triage/macroradiomics/duke/features/features_combined.parquet
+
+  # Disease labels
+  labels_csv: /scratch/railabs/ld258/output/ct_triage/macroradiomics/duke/duke_disease_labels.csv
+
+  # Splits - Duke is external test only
+  # For inference, we use test_ids; train/val not used
+  train_ids: none
+  val_ids: none
+  test_ids: /scratch/railabs/ld258/output/ct_triage/macroradiomics/duke/splits/test_ids.txt

@@ -248,16 +248,35 @@ def main(cfg: DictConfig):
     # Save outputs (main process only)
     if is_main_process():
         # By default, write outputs next to the training run that produced the checkpoint:
-        #   .../<run_dir>/checkpoints/<name>.pt  ->  .../<run_dir>/<split>_predictions.csv
+        #   .../<run_dir>/checkpoints/<name>.pt  ->  .../<run_dir>/<dataset>/<split>_predictions.csv
         ckpt_path_p = Path(ckpt_path).expanduser().resolve()
         if ckpt_path_p.parent.name == "checkpoints":
-            output_dir = ckpt_path_p.parent.parent
+            run_dir = ckpt_path_p.parent.parent
         else:
             # Fallback to Hydra's run dir if checkpoint path doesn't follow the usual structure.
             from hydra.core.hydra_config import HydraConfig
             hydra_cfg = HydraConfig.get()
-            output_dir = Path(hydra_cfg.runtime.output_dir)
+            run_dir = Path(hydra_cfg.runtime.output_dir)
 
+        # Get dataset name from Hydra config (e.g., "merlin" or "duke")
+        # This comes from the dataset config file that was loaded
+        from hydra.core.hydra_config import HydraConfig
+        hydra_cfg = HydraConfig.get()
+        # Extract dataset name from the overrides or defaults
+        dataset_name = "unknown"
+        for override in hydra_cfg.overrides.task:
+            if override.startswith("dataset="):
+                dataset_name = override.split("=")[1]
+                break
+        else:
+            # Check the defaults if not in overrides
+            for default in hydra_cfg.runtime.choices.values():
+                if default in ["merlin", "duke"]:
+                    dataset_name = default
+                    break
+
+        # Create dataset-specific output directory
+        output_dir = run_dir / dataset_name
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Build CSV
