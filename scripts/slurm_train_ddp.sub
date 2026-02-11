@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH --job-name=BASELINE
+#SBATCH --job-name=CONCAT
 #SBATCH --nodes=1
-##SBATCH --nodelist=node001
+#SBATCH --nodelist=node001
 #SBATCH --gres=gpu:a6000:4
 #SBATCH --cpus-per-task=64
-#SBATCH --output=/home/ld258/ipredict/slurm_logs/miccai/janus-BASELINE-output-%j.out
-#SBATCH --error=/home/ld258/ipredict/slurm_logs/miccai/janus-BASELINE-error-%j.out
+#SBATCH --output=/home/ld258/ipredict/slurm_logs/miccai/janus-CONCAT-output-%j.out
+#SBATCH --error=/home/ld258/ipredict/slurm_logs/miccai/janus-CONCAT-error-%j.out
 
 # Default: use all available GPUs
 NGPUS=${NGPUS:-$(nvidia-smi -L | wc -l)}

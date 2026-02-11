@@ -15,7 +15,7 @@ model:
   allow_comparative: false  # Set false for fair comparison with GatedFusion (all diseases get 768d)
 
 training:
-  max_epochs: 30
+  max_epochs: 20
   # Learnable priors (defined in config.yaml, can override here if needed)
   # learn_tau: true
   # init_tau: 0.7

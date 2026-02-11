@@ -13,7 +13,7 @@ model:
   use_gradient_checkpointing: true  # CRITICAL for training unfrozen backbone (saves ~50% memory)
 
 training:
-  max_epochs: 30
+  max_epochs: 20
  
 
 logging:

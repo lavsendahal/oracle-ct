@@ -3,7 +3,7 @@
 
 defaults:
   - _self_
-  - experiment: dinov3_baseline_gap
+  - experiment: dinov3_scalar_fusion
 
 # Paths
 # LR Run Directory - contains disease_config_final.py, feature_stats.json, model_weights.json
