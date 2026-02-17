@@ -1444,7 +1444,32 @@ class JanusGatedFusion(nn.Module):
             self.backbone.eval()
         return self
 
-    def forward(self, batch: Dict[str, Any]) -> torch.Tensor:
+    def forward(
+        self,
+        batch: Dict[str, Any],
+        return_ungated: bool = False,
+    ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
+        """
+        Forward pass with optional ungated predictions for veto analysis.
+
+        Args:
+            batch: Input batch dict with image, masks, features_row, etc.
+            return_ungated: If True, also compute predictions with gate=1 (bypassed).
+                           This is used to measure the gating effect: how much does
+                           the anatomical prior suppress the visual stream's prediction?
+                           Default False for normal inference (no overhead).
+
+        Returns:
+            If return_ungated=False: torch.Tensor of shape [B, num_diseases] (normal)
+            If return_ungated=True: Dict with:
+                - "logits": [B, num_diseases] - normal gated predictions
+                - "logits_ungated": [B, num_diseases] - predictions with gate bypassed (gate=1)
+
+        Note:
+            The ungated predictions answer: "What would the model predict if the
+            anatomical prior fully trusted the visual stream?" This allows computing
+            the veto rate: Pr(p_final < 0.8 | p_ungated >= 0.8, y=0)
+        """
         image = batch["image"]
         masks = batch["masks"]
         features_rows = batch.get("features_row", [None] * image.size(0))
@@ -1489,6 +1514,7 @@ class JanusGatedFusion(nn.Module):
 
         # Per-disease gating
         logits_list = []
+        logits_ungated_list = [] if return_ungated else None
 
         # Debug flag: print features on first forward pass
         debug_features = self.debug_features and not hasattr(self, "_debug_printed")
@@ -1590,6 +1616,12 @@ class JanusGatedFusion(nn.Module):
                 # visual_features = visual_features * sigmoid(Project(scalar_features))
                 gated_visual = self.gating_modules[disease](visual_features, scalar_features)
 
+                # OPTIONAL: Compute ungated prediction (gate=1, bypassed) for veto analysis
+                if return_ungated:
+                    # Ungated = visual_features * 1.0 (as if gate fully open)
+                    # This answers: "What would the model predict without gating?"
+                    ungated_visual = visual_features  # No gating applied
+
                 # Dual-head classification: visual + scalar pathways
                 if self.use_residual and disease in self.heads_scalar:
                     # Visual pathway: gated features
@@ -1643,19 +1675,43 @@ class JanusGatedFusion(nn.Module):
                     if self.debug_scalar_only:
                         # SCALAR ONLY - bypass visual completely to test LR weights
                         logit = logit_scalar
+                        if return_ungated:
+                            logit_ungated = logit_scalar  # Same when scalar-only
                     else:
                         # Combine: additive mixture with learnable weight
                         logit = logit_visual + self.alpha_scalar[disease] * logit_scalar
+
+                        # UNGATED: Use visual_features directly (no gating) + scalar
+                        if return_ungated:
+                            logit_visual_ungated = self.heads_visual[disease](ungated_visual)
+                            logit_ungated = logit_visual_ungated + self.alpha_scalar[disease] * logit_scalar
                 else:
                     # No residual: visual pathway only
                     logit = self.heads_visual[disease](gated_visual)
+
+                    # UNGATED: Use visual_features directly (no gating)
+                    if return_ungated:
+                        logit_ungated = self.heads_visual[disease](ungated_visual)
             else:
-                # No scalars for this disease - use visual only
+                # No scalars for this disease - use visual only (no gating possible)
                 logit = self.heads_visual[disease](visual_features)
 
+                # No gating for this disease, so ungated = gated
+                if return_ungated:
+                    logit_ungated = logit
+
             logits_list.append(logit)
+            if return_ungated:
+                logits_ungated_list.append(logit_ungated)
 
         logits = torch.cat(logits_list, dim=1)
+
+        if return_ungated:
+            logits_ungated = torch.cat(logits_ungated_list, dim=1)
+            return {
+                "logits": logits,              # Normal gated predictions
+                "logits_ungated": logits_ungated,  # Predictions with gate=1 (bypassed)
+            }
 
         return logits
 

@@ -124,6 +124,16 @@ def main(cfg: DictConfig):
 
     # Split IDs (default: test)
     split_name = cfg.get("inference", {}).get("split", "test") if isinstance(cfg.get("inference", None), DictConfig) else "test"
+
+    # VETO ANALYSIS: Optionally return both gated and ungated predictions
+    # This is used to measure the gating effect for hallucination suppression analysis
+    # Default: False (normal inference, no overhead)
+    return_ungated = cfg.get("inference", {}).get("return_ungated", False) if isinstance(cfg.get("inference", None), DictConfig) else False
+    if is_main_process() and return_ungated:
+        print("\n" + "=" * 60)
+        print("VETO ANALYSIS MODE: return_ungated=True")
+        print("Will save both gated (normal) and ungated (gate=1) predictions")
+        print("=" * 60)
     if split_name == "test":
         ids_path = cfg.paths.test_ids
     elif split_name == "val":
@@ -206,6 +216,7 @@ def main(cfg: DictConfig):
 
     all_case_ids: List[str] = []
     all_probs: List[np.ndarray] = []
+    all_probs_ungated: List[np.ndarray] = [] if return_ungated else None
     all_labels: List[np.ndarray] = []
 
     use_amp = cfg.training.get("use_amp", True)
@@ -215,7 +226,16 @@ def main(cfg: DictConfig):
             batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
 
             with torch.cuda.amp.autocast(enabled=use_amp):
-                logits = model(batch)
+                output = model(batch, return_ungated=return_ungated)
+
+            # Handle dict return (when return_ungated=True) vs tensor return (normal)
+            if return_ungated and isinstance(output, dict):
+                logits = output["logits"]
+                logits_ungated = output["logits_ungated"]
+                probs_ungated = torch.sigmoid(logits_ungated).detach().cpu().numpy()
+                all_probs_ungated.append(probs_ungated)
+            else:
+                logits = output
 
             probs = torch.sigmoid(logits).detach().cpu().numpy()
             batch_case_ids = batch["case_id"]
@@ -227,23 +247,48 @@ def main(cfg: DictConfig):
                 all_labels.append(labels.detach().cpu().numpy())
 
     probs_np = np.concatenate(all_probs, axis=0) if all_probs else np.zeros((0, len(disease_names_cfg)), dtype=np.float32)
+    probs_ungated_np = np.concatenate(all_probs_ungated, axis=0) if return_ungated and all_probs_ungated else None
     labels_np = np.concatenate(all_labels, axis=0) if all_labels else None
 
     # Gather across ranks
     if use_ddp and dist.is_initialized():
         gathered_case_ids: List[List[str]] = [None for _ in range(world_size)]  # type: ignore[list-item]
         gathered_probs: List[np.ndarray] = [None for _ in range(world_size)]  # type: ignore[list-item]
+        gathered_probs_ungated: List[np.ndarray] = [None for _ in range(world_size)]  # type: ignore[list-item]
         gathered_labels: List[np.ndarray] = [None for _ in range(world_size)]  # type: ignore[list-item]
 
         dist.all_gather_object(gathered_case_ids, all_case_ids)
         dist.all_gather_object(gathered_probs, probs_np)
+        if return_ungated and probs_ungated_np is not None:
+            dist.all_gather_object(gathered_probs_ungated, probs_ungated_np)
         if labels_np is not None:
             dist.all_gather_object(gathered_labels, labels_np)
 
         if is_main_process():
             all_case_ids = [cid for part in gathered_case_ids for cid in part]
             probs_np = np.concatenate(gathered_probs, axis=0)
+            if return_ungated:
+                probs_ungated_np = np.concatenate([x for x in gathered_probs_ungated if x is not None], axis=0)
             labels_np = np.concatenate([x for x in gathered_labels if x is not None], axis=0) if labels_np is not None else None
+
+            # BUGFIX: DistributedSampler with drop_last=False pads the dataset,
+            # causing some samples to be duplicated. Deduplicate here.
+            seen = set()
+            unique_indices = []
+            for i, cid in enumerate(all_case_ids):
+                if cid not in seen:
+                    seen.add(cid)
+                    unique_indices.append(i)
+
+            if len(unique_indices) < len(all_case_ids):
+                n_dups = len(all_case_ids) - len(unique_indices)
+                print(f"Note: Removed {n_dups} duplicate samples from DDP padding")
+                all_case_ids = [all_case_ids[i] for i in unique_indices]
+                probs_np = probs_np[unique_indices]
+                if return_ungated and probs_ungated_np is not None:
+                    probs_ungated_np = probs_ungated_np[unique_indices]
+                if labels_np is not None:
+                    labels_np = labels_np[unique_indices]
 
     # Save outputs (main process only)
     if is_main_process():
@@ -279,13 +324,24 @@ def main(cfg: DictConfig):
         output_dir = run_dir / dataset_name
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Build CSV
+        # Build CSV for gated (normal) predictions
         df = pd.DataFrame(probs_np, columns=list(disease_names_cfg))
         df.insert(0, "case_id", all_case_ids)
 
         preds_path = output_dir / f"{split_name}_predictions.csv"
         df.to_csv(preds_path, index=False)
         print(f"\nSaved predictions: {preds_path}")
+
+        # VETO ANALYSIS: Also save ungated predictions if requested
+        if return_ungated and probs_ungated_np is not None:
+            df_ungated = pd.DataFrame(probs_ungated_np, columns=list(disease_names_cfg))
+            df_ungated.insert(0, "case_id", all_case_ids)
+
+            preds_ungated_path = output_dir / f"{split_name}_predictions_ungated.csv"
+            df_ungated.to_csv(preds_ungated_path, index=False)
+            print(f"Saved ungated predictions: {preds_ungated_path}")
+            print("\n  NOTE: ungated = predictions with gate=1 (anatomical prior bypassed)")
+            print("        Use for veto analysis: Pr(p_final < 0.8 | p_ungated >= 0.8, y=0)")
 
         # Optional metrics (requires labels)
         if labels_np is not None:
