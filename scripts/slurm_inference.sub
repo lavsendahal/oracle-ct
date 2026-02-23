@@ -49,9 +49,9 @@ echo ""
 
 # Configuration - SET THESE BEFORE RUNNING or pass as environment variables
 # Example: DATASET=duke EXPERIMENT=dinov3_gated_fusion sbatch slurm_inference.sub
-DATASET=${DATASET:-merlin}           # merlin or duke
-EXPERIMENT=${EXPERIMENT:-dinov3_baseline_gap}
-CHECKPOINT=${CHECKPOINT:-/scratch/railabs/ld258/output/ct_triage/janus/runs/JanusGAP/2026-02-10_16-42-53_seed25/checkpoints/gap_best_macro_auc0.8488.pt}
+DATASET=${DATASET:-duke}           # merlin or duke
+EXPERIMENT=${EXPERIMENT:-dinov3_gated_fusion}
+CHECKPOINT=${CHECKPOINT:-/scratch/railabs/ld258/output/ct_triage/janus/runs/JanusGatedFusion/2026-02-10_11-58-42_seed25/checkpoints/gated_fusion_best_macro_auc0.8811.pt}
 
 echo "Dataset: $DATASET"
 echo "Experiment: $EXPERIMENT"
@@ -68,6 +68,7 @@ torchrun \
     experiment=$EXPERIMENT \
     paths.checkpoint=$CHECKPOINT \
     +inference.return_ungated=true \
+    +inference.return_gates=true \
     logging.use_wandb=false \
     training.use_ddp=true \
     "$@"

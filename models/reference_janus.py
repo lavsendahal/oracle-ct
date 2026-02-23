@@ -19,8 +19,7 @@ Janus Models for Neuro-Symbolic CT Disease Classification
 Four model variants:
 1. JanusGAP: DINOv3 + Global Average Pooling (baseline)
 2. JanusMaskedAttn: DINOv3 + Organ-Masked Attention
-3. JanusScalarFusion: DINOv3 + Masked Attention + Scalar Feature Fusion
-4. JanusGatedFusion: DINOv3 + Anatomically Guided Gating
+3. JanusGatedFusion: DINOv3 + Anatomically Guided Gating
 
 Key improvements over previous implementation:
 - Precise appendix ROI (from disease_rois) instead of colon mask
@@ -794,301 +793,6 @@ class JanusMaskedAttn(nn.Module):
         return logits
 
 
-# =============================================================================
-# MODEL 3: MASKED ATTENTION + SCALAR FUSION
-# =============================================================================
-
-class JanusScalarFusion(nn.Module):
-    """
-    DINOv3 + Masked Attention + Scalar Feature Fusion
-
-    Fuses visual features with scalar radiomics features:
-    - Volume ratios (body-size normalized)
-    - HU comparisons (liver vs spleen)
-    - Diameter measurements
-    - Derived features (SBO ratio, etc.)
-
-    Architecture: Separate Visual and Scalar Projectors
-    - Visual features (768-3072 dim) → Visual Projector → visual_proj_dim
-    - Scalar features (10-20 dim) → Scalar Projector → scalar_proj_dim
-    - Concatenate balanced projections → Fusion MLP → Logit
-    - This ensures equal gradient flow and representational power for both modalities
-    """
-
-    def __init__(
-        self,
-        num_diseases: int = 30,
-        disease_names: List[str] = None,
-        variant: str = "S",  # "S", "B", or "L"
-        image_size: int = 224,
-        tri_stride: int = 1,
-        freeze_backbone: bool = True,
-        learn_tau: bool = True,
-        init_tau: float = 0.7,
-        fixed_tau: float = 1.0,
-        use_mask_bias: bool = True,
-        init_inside: float = 0.8,
-        init_outside: float = 0.2,
-        fusion_hidden: int = 256,
-        visual_proj_dim: int = 256,  # Dimension for visual projection
-        scalar_proj_dim: int = 256,  # Dimension for scalar projection
-        feature_stats_path: Optional[str] = None,
-        use_gradient_checkpointing: bool = False,
-        use_modality_gating: bool = False,  # Deprecated - use separate projectors instead
-    ):
-        super().__init__()
-
-        self.num_diseases = num_diseases
-        all_diseases = get_all_diseases()
-        self.disease_names = disease_names or all_diseases[:num_diseases]
-        self.image_size = image_size
-        self.tri_stride = tri_stride
-        self.learn_tau = learn_tau
-        self.fixed_tau = fixed_tau
-        self.use_mask_bias = use_mask_bias
-        self.variant = variant.upper()
-        self.use_modality_gating = use_modality_gating
-
-        # Feature bank for scalar features
-        self.feature_bank = FeatureBank(
-            stats_path=feature_stats_path,
-            normalize="zscore",
-        )
-
-        # Get DINOv3 model ID from variant
-        if self.variant not in DINOV3_HF_IDS:
-            raise ValueError(f"Invalid variant '{variant}'. Must be one of: {list(DINOV3_HF_IDS.keys())}")
-
-        backbone_id = DINOV3_HF_IDS[self.variant]
-
-        # Load backbone
-        self.backbone = AutoModel.from_pretrained(backbone_id, trust_remote_code=True)
-        self.hidden_dim = self.backbone.config.hidden_size
-
-        # Store freeze setting
-        self.freeze_backbone = freeze_backbone
-
-        # Freeze backbone if requested
-        if freeze_backbone:
-            for p in self.backbone.parameters():
-                p.requires_grad = False
-            self.backbone.eval()
-        else:
-            for p in self.backbone.parameters():
-                p.requires_grad = True
-            self.backbone.train()
-
-            # Enable gradient checkpointing to save memory (only when training backbone)
-            if use_gradient_checkpointing:
-                if hasattr(self.backbone, 'gradient_checkpointing_enable'):
-                    self.backbone.gradient_checkpointing_enable()
-                    print(f"✓ Gradient checkpointing enabled for {self.variant} backbone")
-
-        # Per-disease components: Attention MLPs + Separate Projectors + Fusion
-        self.score_mlps = nn.ModuleDict()
-        self.visual_projectors = nn.ModuleDict()
-        self.scalar_projectors = nn.ModuleDict()
-        self.fusion_heads = nn.ModuleDict()
-
-        # Learnable priors (bias and temperature) - CRITICAL for masking performance!
-        if self.use_mask_bias:
-            self.inside_logit = nn.ParameterDict()   # Bias for inside mask regions
-            self.outside_logit = nn.ParameterDict()  # Bias for outside mask regions
-
-        if self.learn_tau:
-            self.temp_logit = nn.ParameterDict()  # Learnable temperature per disease
-
-        for disease in self.disease_names:
-            # Attention score MLP (unchanged)
-            self.score_mlps[disease] = nn.Linear(self.hidden_dim, 1)
-
-            # Learnable priors for masked attention
-            if self.use_mask_bias:
-                # Initialize inside/outside logits from config probabilities
-                self.inside_logit[disease] = nn.Parameter(torch.tensor(to_logit(init_inside)))
-                self.outside_logit[disease] = nn.Parameter(torch.tensor(to_logit(init_outside)))
-
-            if self.learn_tau:
-                # BUGFIX: Use inverse sigmoid to correctly initialize temperature
-                # Old: to_logit(0.7) produces tau≈1.46 (WRONG!)
-                # New: inv_sigmoid_temp(0.7) produces tau=0.7 (CORRECT!)
-                self.temp_logit[disease] = nn.Parameter(torch.tensor(inv_sigmoid_temp(init_tau)))
-
-            disease_configs = get_all_disease_configs()
-            config = disease_configs.get(disease)
-
-            # Count scalar features: Use EXACT same features as LR baseline (no presence indicators)
-            num_base_features = len(config.scalar_features) + len(config.derived_features) if config else 0
-            num_scalars = num_base_features  # IDENTICAL to LR: no presence indicators
-
-            # Visual feature dimension (always hidden_dim now - no more comparative)
-            visual_dim = self.hidden_dim
-
-            # Visual Projector: visual_dim -> visual_proj_dim
-            self.visual_projectors[disease] = nn.Sequential(
-                nn.Linear(visual_dim, visual_proj_dim),
-                nn.ReLU(inplace=True),
-            )
-
-            # BUGFIX: Only register scalar_projector if scalars exist (ModuleDict cannot store None)
-            # Old: self.scalar_projectors[disease] = None (CRASHES!)
-            # New: Only register when num_scalars > 0 (CORRECT!)
-            if num_scalars > 0:
-                # Two-layer projector for better expressiveness
-                scalar_hidden = max(64, num_scalars * 4)  # Adaptive hidden size
-                self.scalar_projectors[disease] = nn.Sequential(
-                    nn.Linear(num_scalars, scalar_hidden),
-                    nn.ReLU(inplace=True),
-                    nn.Linear(scalar_hidden, scalar_proj_dim),
-                    nn.ReLU(inplace=True),
-                )
-            # else: Do nothing - don't register at all (check with "disease in self.scalar_projectors")
-
-            # Fusion Head: (visual_proj_dim + scalar_proj_dim) -> 1
-            # Balanced input: 256 + 256 = 512 (equal representation!)
-            fusion_input_dim = visual_proj_dim + (scalar_proj_dim if num_scalars > 0 else 0)
-
-            self.fusion_heads[disease] = nn.Sequential(
-                nn.LayerNorm(fusion_input_dim),
-                nn.Linear(fusion_input_dim, fusion_hidden),
-                nn.ReLU(inplace=True),
-                nn.Dropout(0.1),
-                nn.Linear(fusion_hidden, 1),
-            )
-
-        print(f"✓ Separate projectors: Visual ({visual_proj_dim}d) + Scalar ({scalar_proj_dim}d) → Fusion ({fusion_hidden}d → 1)")
-
-        # Deprecated: Old modality gating (kept for backward compatibility)
-        if self.use_modality_gating:
-            self.visual_gate_logit = nn.Parameter(torch.zeros(num_diseases))
-            self.scalar_gate_logit = nn.Parameter(torch.zeros(num_diseases))
-            print(f"⚠ WARNING: use_modality_gating=True is deprecated. Separate projectors are now used instead.")
-
-        # Normalization buffers
-        self.register_buffer("_mean", torch.tensor(IMN_MEAN).view(1, 1, 3, 1, 1))
-        self.register_buffer("_std", torch.tensor(IMN_STD).view(1, 1, 3, 1, 1))
-
-    def _normalize(self, x: torch.Tensor) -> torch.Tensor:
-        return (x - self._mean) / self._std
-
-    def train(self, mode: bool = True):
-        """Override train to keep backbone frozen if requested."""
-        super().train(mode)
-        if self.freeze_backbone:
-            self.backbone.eval()
-        return self
-
-    
-    def forward(self, batch: Dict[str, Any]) -> torch.Tensor:
-        image = batch["image"]
-        masks = batch["masks"]
-        features_rows = batch.get("features_row", [None] * image.size(0))  # List[pd.Series] from parquet
-        disease_rois = batch.get("disease_rois", [{}] * image.size(0))
-        meta = batch.get("meta", [{}] * image.size(0))
-        
-        B, _, D, H, W = image.shape
-        device = image.device
-        
-        # Convert to TRI-slices
-        tri = make_trislices(image, self.tri_stride)
-        T = tri.size(1)
-        
-        tri = F.interpolate(
-            tri.view(B * T, 3, H, W),
-            size=(self.image_size, self.image_size),
-            mode="bilinear", align_corners=False
-        ).view(B, T, 3, self.image_size, self.image_size)
-        tri = self._normalize(tri)
-
-        # Forward through backbone
-        tri_flat = tri.view(B * T, 3, self.image_size, self.image_size)
-        out = self.backbone(pixel_values=tri_flat)
-        tokens = out.last_hidden_state[:, 1:, :]  # Remove CLS token
-
-        # Remove register tokens (DINOv3 has 4 register tokens at the end)
-        num_register_tokens = getattr(self.backbone.config, "num_register_tokens", 0)
-        if num_register_tokens > 0 and tokens.size(1) > num_register_tokens:
-            tokens = tokens[:, :-num_register_tokens, :]  # [B*T, N, D]
-
-        N, D_tok = tokens.size(1), tokens.size(2)
-        tokens = tokens.view(B, T, N, D_tok)
-
-        # Pre-compute derived features ONCE per batch (not per disease!)
-        derived_features_batch = []
-        for b in range(B):
-            derived = self.feature_bank.compute_derived_features(meta[b], features_row=features_rows[b])
-            derived_features_batch.append(derived)
-
-        # Per-disease attention + scalar fusion
-        logits_list = []
-
-        for disease in self.disease_names:
-            # ScalarFusion pools a single visual stream per disease; comparative masks (list of masks)
-            # are only supported by JanusMaskedAttn. For comparative-config diseases, fall back
-            # to a union mask here.
-            attn_mask = get_attention_mask_for_disease(
-                disease, masks, disease_rois, meta, device, allow_comparative=False
-            )
-            # Get learnable priors for this disease
-            bias_in = self.inside_logit[disease] if self.use_mask_bias else None
-            bias_out = self.outside_logit[disease] if self.use_mask_bias else None
-
-            # Get temperature for this disease
-            if self.learn_tau:
-                # Map temp_logit to [0.2, 2.0] range via sigmoid: tau = 0.2 + 1.8 * sigmoid(logit)
-                tau = 0.2 + 1.8 * torch.sigmoid(self.temp_logit[disease])
-            else:
-                tau = self.fixed_tau
-
-            # Visual pooling (union mask)
-            mask_tri = masks_3d_to_tri(attn_mask, self.tri_stride)
-            mask_tri = F.interpolate(
-                mask_tri.view(B * T, 1, H, W),
-                size=(self.image_size, self.image_size), mode="nearest"
-            ).view(B, T, self.image_size, self.image_size)
-
-            # Masked attention pooling WITH learnable priors
-            visual_features = masked_attention_pool(
-                tokens, mask_tri, self.score_mlps[disease],
-                tau=tau, bias_in=bias_in, bias_out=bias_out
-            )
-
-            # Get scalar features for this disease (using cached derived features)
-            scalar_features_list = []
-            for b in range(B):
-                scalars, _ = self.feature_bank.get_features_for_disease(
-                    disease, meta[b], features_row=features_rows[b], normalize=True,
-                    cached_derived=derived_features_batch[b]  # Pass cached!
-                )
-                scalar_features_list.append(scalars.to(device))
-
-            # PROJECT VISUAL FEATURES to balanced dimension
-            visual_projected = self.visual_projectors[disease](visual_features)  # [B, visual_proj_dim]
-
-            # PROJECT SCALAR FEATURES to balanced dimension (if they exist)
-            # BUGFIX: Check if disease has scalar_projector registered (not if scalars are non-empty)
-            if disease in self.scalar_projectors and scalar_features_list[0].numel() > 0:
-                scalar_features = torch.stack(scalar_features_list, dim=0)  # [B, num_scalars]
-                # Note: ALL features now have binary presence indicators (value, is_present)
-                # Missing values → value=0.0, present=0.0 | Measured values → value=normalized, present=1.0
-
-                scalar_projected = self.scalar_projectors[disease](scalar_features)  # [B, scalar_proj_dim]
-
-                # BALANCED FUSION: Concatenate equal-dimensional projections
-                fused = torch.cat([visual_projected, scalar_projected], dim=1)  # [B, visual_proj_dim + scalar_proj_dim]
-            else:
-                # No scalars for this disease - use only visual
-                fused = visual_projected  # [B, visual_proj_dim]
-
-            # FUSION HEAD: Balanced features → logit
-            logit = self.fusion_heads[disease](fused)  # [B, 1]
-            logits_list.append(logit)
-
-        logits = torch.cat(logits_list, dim=1)
-
-        return logits
-
-
 class AnatomicallyGuidedGate(nn.Module):
     """
     Implements the Prior-Aware Gating Mechanism.
@@ -1109,29 +813,22 @@ class AnatomicallyGuidedGate(nn.Module):
         nn.init.xavier_uniform_(self.gate_projector.weight)
         nn.init.constant_(self.gate_projector.bias, 2.0)
 
-    def forward(
-        self,
-        visual_feats: torch.Tensor,
-        scalar_feats: torch.Tensor,
-        return_gate: bool = False,
-    ) -> Union[torch.Tensor, tuple]:
+    def forward(self, visual_feats: torch.Tensor, scalar_feats: torch.Tensor) -> torch.Tensor:
         """
         Args:
             visual_feats: [B, visual_dim]
             scalar_feats: [B, scalar_dim]
-            return_gate: If True, also return the raw gate vector for analysis.
         Returns:
             gated_feats: [B, visual_dim]
-            gate (only if return_gate=True): [B, visual_dim] values in (0, 1)
         """
         # 1. Compute Gate Vector (0 to 1)
+        # scalar_feats must be projected up to visual_dim
         gate = torch.sigmoid(self.gate_projector(scalar_feats))
 
         # 2. Apply Gate (Element-wise multiplication)
+        # Suppresses visual features where the gate is closed (0)
         gated_feats = visual_feats * gate
 
-        if return_gate:
-            return gated_feats, gate
         return gated_feats
 
 
@@ -1455,27 +1152,22 @@ class JanusGatedFusion(nn.Module):
         self,
         batch: Dict[str, Any],
         return_ungated: bool = False,
-        return_gates: bool = False,
     ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
         """
-        Forward pass with optional ungated predictions and/or gate value logging.
+        Forward pass with optional ungated predictions for veto analysis.
 
         Args:
             batch: Input batch dict with image, masks, features_row, etc.
             return_ungated: If True, also compute predictions with gate=1 (bypassed).
-                           Used to measure the gating effect (veto analysis).
-            return_gates: If True, also return the mean gate activation per disease
-                         per sample. Used to verify the gate is learning something
-                         physically meaningful (e.g. gate_mean vs spleen volume).
-                         Output key: "gates" → Dict[disease_name, Tensor[B]]
+                           This is used to measure the gating effect: how much does
+                           the anatomical prior suppress the visual stream's prediction?
+                           Default False for normal inference (no overhead).
 
         Returns:
-            If return_ungated=False and return_gates=False:
-                torch.Tensor [B, num_diseases]
-            Otherwise a Dict with any subset of:
-                - "logits": [B, num_diseases]
-                - "logits_ungated": [B, num_diseases]  (if return_ungated)
-                - "gates": Dict[str, Tensor[B]]        (if return_gates)
+            If return_ungated=False: torch.Tensor of shape [B, num_diseases] (normal)
+            If return_ungated=True: Dict with:
+                - "logits": [B, num_diseases] - normal gated predictions
+                - "logits_ungated": [B, num_diseases] - predictions with gate bypassed (gate=1)
 
         Note:
             The ungated predictions answer: "What would the model predict if the
@@ -1527,7 +1219,6 @@ class JanusGatedFusion(nn.Module):
         # Per-disease gating
         logits_list = []
         logits_ungated_list = [] if return_ungated else None
-        gates_dict: Dict[str, torch.Tensor] = {} if return_gates else None
 
         # Debug flag: print features on first forward pass
         debug_features = self.debug_features and not hasattr(self, "_debug_printed")
@@ -1627,14 +1318,7 @@ class JanusGatedFusion(nn.Module):
 
                 # APPLY THE ANATOMICALLY GUIDED GATE
                 # visual_features = visual_features * sigmoid(Project(scalar_features))
-                if return_gates:
-                    gated_visual, gate_vec = self.gating_modules[disease](
-                        visual_features, scalar_features, return_gate=True
-                    )
-                    # Store mean gate activation per sample: [B]
-                    gates_dict[disease] = gate_vec.mean(dim=-1).detach().cpu()
-                else:
-                    gated_visual = self.gating_modules[disease](visual_features, scalar_features)
+                gated_visual = self.gating_modules[disease](visual_features, scalar_features)
 
                 # OPTIONAL: Compute ungated prediction (gate=1, bypassed) for veto analysis
                 if return_ungated:
@@ -1726,13 +1410,12 @@ class JanusGatedFusion(nn.Module):
 
         logits = torch.cat(logits_list, dim=1)
 
-        if return_ungated or return_gates:
-            out: Dict[str, Any] = {"logits": logits}
-            if return_ungated:
-                out["logits_ungated"] = torch.cat(logits_ungated_list, dim=1)
-            if return_gates:
-                out["gates"] = gates_dict  # Dict[disease_name, Tensor[B]]
-            return out
+        if return_ungated:
+            logits_ungated = torch.cat(logits_ungated_list, dim=1)
+            return {
+                "logits": logits,              # Normal gated predictions
+                "logits_ungated": logits_ungated,  # Predictions with gate=1 (bypassed)
+            }
 
         return logits
 
@@ -1794,7 +1477,7 @@ if __name__ == "__main__":
     print("Janus Models")
     print("=" * 60)
     print("""
-Three model variants:
+model variants:
 
 1. JanusGAP (baseline)
    - DINOv3 + Global Average Pooling
@@ -1804,13 +1487,7 @@ Three model variants:
    - Organ-masked attention per disease
    - ROI attention for appendicitis (precise box)
    - Comparative attention for steatosis (liver vs spleen)
-   
-3. JanusScalarFusion
-   - Masked attention + scalar feature fusion
-   - Body-size normalized volumes
-   - Liver-spleen HU difference
-   - SBO diameter ratio
-   
+
 Usage:
     model = build_model_from_config({
         "model_type": "scalar_fusion",

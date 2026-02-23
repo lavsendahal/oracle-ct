@@ -134,6 +134,15 @@ def main(cfg: DictConfig):
         print("VETO ANALYSIS MODE: return_ungated=True")
         print("Will save both gated (normal) and ungated (gate=1) predictions")
         print("=" * 60)
+
+    # GATE ANALYSIS: Optionally log mean gate activation per disease per sample
+    # Used to verify the gate is physically meaningful (gate_mean vs scalar plots)
+    return_gates = cfg.get("inference", {}).get("return_gates", False) if isinstance(cfg.get("inference", None), DictConfig) else False
+    if is_main_process() and return_gates:
+        print("\n" + "=" * 60)
+        print("GATE ANALYSIS MODE: return_gates=True")
+        print("Will save mean gate activation per disease to CSV")
+        print("=" * 60)
     if split_name == "test":
         ids_path = cfg.paths.test_ids
     elif split_name == "val":
@@ -218,6 +227,8 @@ def main(cfg: DictConfig):
     all_probs: List[np.ndarray] = []
     all_probs_ungated: List[np.ndarray] = [] if return_ungated else None
     all_labels: List[np.ndarray] = []
+    # gate_means: disease_name -> list of per-batch [B] arrays
+    all_gate_means: Dict[str, List[np.ndarray]] = {} if return_gates else None
 
     use_amp = cfg.training.get("use_amp", True)
     pbar = tqdm(loader, desc=f"Inference [{split_name}]", disable=not is_main_process())
@@ -226,14 +237,18 @@ def main(cfg: DictConfig):
             batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
 
             with torch.cuda.amp.autocast(enabled=use_amp):
-                output = model(batch, return_ungated=return_ungated)
+                output = model(batch, return_ungated=return_ungated, return_gates=return_gates)
 
-            # Handle dict return (when return_ungated=True) vs tensor return (normal)
-            if return_ungated and isinstance(output, dict):
+            # Handle dict return vs plain tensor return
+            if isinstance(output, dict):
                 logits = output["logits"]
-                logits_ungated = output["logits_ungated"]
-                probs_ungated = torch.sigmoid(logits_ungated).detach().cpu().numpy()
-                all_probs_ungated.append(probs_ungated)
+                if return_ungated and "logits_ungated" in output:
+                    probs_ungated = torch.sigmoid(output["logits_ungated"]).detach().cpu().numpy()
+                    all_probs_ungated.append(probs_ungated)
+                if return_gates and "gates" in output:
+                    for disease, gate_mean in output["gates"].items():
+                        gate_np = gate_mean.numpy()  # [B], already on CPU
+                        all_gate_means.setdefault(disease, []).append(gate_np)
             else:
                 logits = output
 
@@ -249,6 +264,10 @@ def main(cfg: DictConfig):
     probs_np = np.concatenate(all_probs, axis=0) if all_probs else np.zeros((0, len(disease_names_cfg)), dtype=np.float32)
     probs_ungated_np = np.concatenate(all_probs_ungated, axis=0) if return_ungated and all_probs_ungated else None
     labels_np = np.concatenate(all_labels, axis=0) if all_labels else None
+    gate_means_np = (
+        {d: np.concatenate(v, axis=0) for d, v in all_gate_means.items()}
+        if return_gates and all_gate_means else None
+    )
 
     # Gather across ranks
     if use_ddp and dist.is_initialized():
@@ -256,6 +275,7 @@ def main(cfg: DictConfig):
         gathered_probs: List[np.ndarray] = [None for _ in range(world_size)]  # type: ignore[list-item]
         gathered_probs_ungated: List[np.ndarray] = [None for _ in range(world_size)]  # type: ignore[list-item]
         gathered_labels: List[np.ndarray] = [None for _ in range(world_size)]  # type: ignore[list-item]
+        gathered_gate_means: List[Dict] = [None for _ in range(world_size)]  # type: ignore[list-item]
 
         dist.all_gather_object(gathered_case_ids, all_case_ids)
         dist.all_gather_object(gathered_probs, probs_np)
@@ -263,6 +283,8 @@ def main(cfg: DictConfig):
             dist.all_gather_object(gathered_probs_ungated, probs_ungated_np)
         if labels_np is not None:
             dist.all_gather_object(gathered_labels, labels_np)
+        if return_gates and gate_means_np is not None:
+            dist.all_gather_object(gathered_gate_means, gate_means_np)
 
         if is_main_process():
             all_case_ids = [cid for part in gathered_case_ids for cid in part]
@@ -270,6 +292,12 @@ def main(cfg: DictConfig):
             if return_ungated:
                 probs_ungated_np = np.concatenate([x for x in gathered_probs_ungated if x is not None], axis=0)
             labels_np = np.concatenate([x for x in gathered_labels if x is not None], axis=0) if labels_np is not None else None
+            if return_gates:
+                all_diseases_gathered = set(d for g in gathered_gate_means if g for d in g)
+                gate_means_np = {
+                    d: np.concatenate([g[d] for g in gathered_gate_means if g and d in g], axis=0)
+                    for d in all_diseases_gathered
+                }
 
             # BUGFIX: DistributedSampler with drop_last=False pads the dataset,
             # causing some samples to be duplicated. Deduplicate here.
@@ -289,6 +317,8 @@ def main(cfg: DictConfig):
                     probs_ungated_np = probs_ungated_np[unique_indices]
                 if labels_np is not None:
                     labels_np = labels_np[unique_indices]
+                if return_gates and gate_means_np is not None:
+                    gate_means_np = {d: v[unique_indices] for d, v in gate_means_np.items()}
 
     # Save outputs (main process only)
     if is_main_process():
@@ -342,6 +372,20 @@ def main(cfg: DictConfig):
             print(f"Saved ungated predictions: {preds_ungated_path}")
             print("\n  NOTE: ungated = predictions with gate=1 (anatomical prior bypassed)")
             print("        Use for veto analysis: Pr(p_final < 0.8 | p_ungated >= 0.8, y=0)")
+
+        # GATE ANALYSIS: Save mean gate activation per disease
+        if return_gates and gate_means_np:
+            gate_cols = {
+                f"gate_mean_{disease}": vals
+                for disease, vals in gate_means_np.items()
+            }
+            df_gates = pd.DataFrame(gate_cols)
+            df_gates.insert(0, "case_id", all_case_ids)
+            gates_path = output_dir / f"{split_name}_gate_means.csv"
+            df_gates.to_csv(gates_path, index=False)
+            print(f"Saved gate means: {gates_path}")
+            print("  Columns: case_id, gate_mean_<disease> ...")
+            print("  Use for gate analysis: plot gate_mean vs scalar (e.g. spleen_volume)")
 
         # Optional metrics (requires labels)
         if labels_np is not None:
