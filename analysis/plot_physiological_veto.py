@@ -25,12 +25,12 @@ from scipy import stats
 plt.rcParams.update({
     'font.family': 'sans-serif',
     'font.sans-serif': ['Arial', 'Helvetica', 'DejaVu Sans'],
-    'font.size': 11,
-    'axes.labelsize': 13,
-    'axes.titlesize': 14,
-    'legend.fontsize': 9,
-    'xtick.labelsize': 11,
-    'ytick.labelsize': 11,
+    'font.size': 16,
+    'axes.labelsize': 18,
+    'axes.titlesize': 19,
+    'legend.fontsize': 12,
+    'xtick.labelsize': 16,
+    'ytick.labelsize': 16,
     'figure.dpi': 300,
     'savefig.dpi': 300,
     'axes.linewidth': 1.2,
@@ -187,19 +187,19 @@ def plot_veto_panel(ax, veto_stats):
     ax.annotate('', xy=(0.22, ymax * 0.72), xytext=(0.88, ymax * 0.72),
                 arrowprops=dict(arrowstyle='->', color=COLOR_GATED,
                                 lw=4, mutation_scale=25), zorder=5)
-    ax.text(0.55, ymax * 0.80, 'Physiological Veto', fontsize=13,
+    ax.text(0.55, ymax * 0.80, 'Physiological Veto', fontsize=10,
             fontweight='bold', color=COLOR_GATED, ha='center', zorder=5)
 
     # Zone labels
-    ax.text(0.25, ymax * 0.95, 'Safe Zone\n(p < 0.5)', fontsize=9,
+    ax.text(0.25, ymax * 0.95, 'Safe Zone\n(p < 0.5)', fontsize=13,
             color='#2E7D32', ha='center', fontweight='bold', alpha=0.9)
-    ax.text(0.90, ymax * 0.95, 'Danger\nZone', fontsize=9,
+    ax.text(0.90, ymax * 0.95, 'Danger\nZone', fontsize=13,
             color='#C62828', ha='center', fontweight='bold', alpha=0.9)
 
     # Selectivity annotation box — shifted left so it doesn't overlap the arrow text
     props = dict(boxstyle='round,pad=0.4', facecolor='white',
                  edgecolor=COLOR_GATED, linewidth=2)
-    ax.text(0.19, ymax * 0.58,
+    ax.text(0.19, ymax * 0.48,
             f'{fp_veto_rate:.1f}% of FPs\nSuppressed\n\n'
             f'Only {tp_suppress_rate:.1f}% of TPs\nAffected\n\n'
             f'Selectivity: {selectivity:.1f}\u00d7',
@@ -211,7 +211,7 @@ def plot_veto_panel(ax, veto_stats):
     ax.set_ylabel('Density', fontweight='bold')
     ax.set_xlim(0, 1)
     ax.legend(loc='upper left', framealpha=0.95, edgecolor='#CCCCCC', fancybox=True,
-              bbox_to_anchor=(0.0, 0.27))
+              bbox_to_anchor=(0.0, 0.38))
     ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5, axis='y')
 
 
@@ -258,11 +258,14 @@ def main():
 
         pdf_path = OUTPUT_DIR / f"physiological_veto_{tag}.pdf"
         png_path = OUTPUT_DIR / f"physiological_veto_{tag}.png"
+        svg_path = OUTPUT_DIR / f"physiological_veto_{tag}.svg"
         fig.savefig(pdf_path, format='pdf', bbox_inches='tight', dpi=300, facecolor='white')
         fig.savefig(png_path, format='png', bbox_inches='tight', dpi=300, facecolor='white')
+        fig.savefig(svg_path, format='svg', bbox_inches='tight', facecolor='white')
         plt.close(fig)
         print(f"\nSaved: {pdf_path}")
         print(f"Saved: {png_path}")
+        print(f"Saved: {svg_path}")
 
     # =========================================================================
     # Save summary CSV
