@@ -200,9 +200,9 @@ def plot_veto_panel(ax, veto_stats):
     props = dict(boxstyle='round,pad=0.4', facecolor='white',
                  edgecolor=COLOR_GATED, linewidth=2)
     ax.text(0.19, ymax * 0.48,
-            f'{fp_veto_rate:.1f}% of FPs\nSuppressed\n\n'
-            f'Only {tp_suppress_rate:.1f}% of TPs\nAffected\n\n'
-            f'Selectivity: {selectivity:.1f}\u00d7',
+            f'{fp_veto_rate:.2f}% of FPs\nSuppressed\n\n'
+            f'Only {tp_suppress_rate:.2f}% of TPs\nAffected\n\n'
+            f'Selectivity: {selectivity:.2f}\u00d7',
             fontsize=10, fontweight='bold', color=COLOR_GATED, ha='center',
             bbox=props, zorder=5)
 

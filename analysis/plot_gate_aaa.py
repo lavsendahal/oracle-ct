@@ -44,9 +44,12 @@ SCALAR      = "aorta_vessel_diam_max"
 plt.rcParams.update({
     'font.family': 'sans-serif',
     'font.sans-serif': ['Arial', 'Helvetica', 'DejaVu Sans'],
-    'font.size': 12,
-    'axes.labelsize': 12,
-    'axes.titlesize': 12,
+    'font.size': 16,
+    'axes.labelsize': 18,
+    'axes.titlesize': 19,
+    'legend.fontsize': 12,
+    'xtick.labelsize': 16,
+    'ytick.labelsize': 16,
     'axes.linewidth': 1.2,
     'axes.spines.top': False,
     'axes.spines.right': False,
@@ -221,12 +224,19 @@ def make_figure(gate, labels, scalar, dataset, out_dir):
     ]
     pd.DataFrame(stats_rows).to_csv(out_dir / f"gate_aaa_stats_{dataset}.csv", index=False)
 
-    # ── Figure ────────────────────────────────────────────────────────────────
+    # ── Figures ───────────────────────────────────────────────────────────────
     scalar_display = "Aorta Vessel Maximum Diameter"
+    dir_arrow = "↓" if direction == "suppressed" else "↑"
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5), facecolor="white")
+    def _save(fig, stem):
+        for fmt, kw in [("png", {"dpi": 200}), ("pdf", {}), ("svg", {})]:
+            p = out_dir / f"{stem}.{fmt}"
+            fig.savefig(p, format=fmt, bbox_inches="tight", facecolor="white", **kw)
+            print(f"  Saved: {p}")
 
-    # ── Panel A: Violin ───────────────────────────────────────────────────────
+    # ── Figure A: Violin ──────────────────────────────────────────────────────
+    fig_a, ax1 = plt.subplots(1, 1, figsize=(5.5, 5.5), facecolor="white")
+
     parts = ax1.violinplot(
         [gate_neg[~np.isnan(gate_neg)], gate_pos[~np.isnan(gate_pos)]],
         positions=[0, 1], showmedians=True, showextrema=True,
@@ -239,18 +249,23 @@ def make_figure(gate, labels, scalar, dataset, out_dir):
     parts["cmins"].set_color("gray")
 
     ax1.set_xticks([0, 1])
-    ax1.set_xticklabels([f"Negative\n(n={n_neg})", f"Positive\n(n={n_pos})"], fontsize=12)
-    ax1.set_ylabel("Mean Gate Activation", fontsize=12)
+    ax1.set_xticklabels([f"Negative\n(n={n_neg})", f"Positive\n(n={n_pos})"], fontsize=16)
+    ax1.set_ylabel("Mean Gate Activation", fontsize=18, fontweight='bold')
     ax1.set_ylim(0, 1)
-    dir_arrow = "↓" if direction == "suppressed" else "↑"
     ax1.set_title(f"Gate by Label\nGate Separability AUC={sep_auc:.3f} ({dir_arrow}{direction})",
-                  fontsize=12, fontweight="bold")
+                  fontsize=19, fontweight="bold")
     ax1.axhline(0.5, ls="--", color="gray", lw=0.8, alpha=0.5)
     ax1.set_facecolor("#f8f8f8")
     ax1.spines["top"].set_visible(False)
     ax1.spines["right"].set_visible(False)
 
-    # ── Panel B: Scatter + within-group regression ────────────────────────────
+    fig_a.tight_layout(pad=2.5)
+    _save(fig_a, f"gate_aaa_violin_{dataset}")
+    plt.close(fig_a)
+
+    # ── Figure B: Scatter + within-group regression ───────────────────────────
+    fig_b, ax2 = plt.subplots(1, 1, figsize=(6.5, 5.5), facecolor="white")
+
     for lbl_val, color, res, lbl_name in [
         (0, COLOR_NEG, res_neg, "Negative"),
         (1, COLOR_POS, res_pos, "Positive"),
@@ -265,29 +280,20 @@ def make_figure(gate, labels, scalar, dataset, out_dir):
             ax2.plot(x_line, y_line, color=color, linewidth=2.2,
                      label=f"{lbl_name}  (ρ={res['spearman_r']:.2f}, {p_str})")
 
-    ax2.set_xlabel(scalar_display, fontsize=12)
-    ax2.set_ylabel("Mean Gate Activation", fontsize=12)
+    ax2.set_xlabel(scalar_display, fontsize=18, fontweight='bold')
+    ax2.set_ylabel("Mean Gate Activation", fontsize=18, fontweight='bold')
     ax2.set_ylim(0, 1)
-    ax2.set_title(f"Gate vs {scalar_display}\nWithin-group OLS regression",
-                  fontsize=12, fontweight="bold")
+
     ax2.legend(fontsize=12, framealpha=0.9)
     ax2.set_facecolor("#f8f8f8")
     ax2.spines["top"].set_visible(False)
     ax2.spines["right"].set_visible(False)
 
-    plt.tight_layout(pad=2.5)
+    fig_b.tight_layout(pad=2.5)
+    _save(fig_b, f"gate_aaa_regression_{dataset}")
+    plt.close(fig_b)
 
-    png_path = out_dir / f"gate_aaa_detailed_{dataset}.png"
-    pdf_path = out_dir / f"gate_aaa_detailed_{dataset}.pdf"
-    svg_path = out_dir / f"gate_aaa_detailed_{dataset}.svg"
-    fig.savefig(png_path, dpi=200, bbox_inches="tight", facecolor="white")
-    fig.savefig(pdf_path, format="pdf", bbox_inches="tight", facecolor="white")
-    fig.savefig(svg_path, format="svg", bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-    print(f"\n  Saved: {png_path}")
-    print(f"  Saved: {pdf_path}")
-    print(f"  Saved: {svg_path}")
-    return png_path
+    return out_dir / f"gate_aaa_violin_{dataset}.png"
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

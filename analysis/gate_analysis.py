@@ -49,7 +49,7 @@ OUTPUT_DIR  = Path("/scratch/railabs/ld258/output/ct_triage/janus/miccai2026/gat
 MERLIN_LABELS   = Path("/scratch/railabs/ld258/dataset/merlin/merlinabdominalctdataset/zero_shot_findings_disease_cls.csv")
 MERLIN_FEATURES = Path("/scratch/railabs/ld258/output/ct_triage/macroradiomics/merlin/features/features_combined.parquet")
 
-DUKE_LABELS   = Path("/scratch/railabs/ld258/output/ct_triage/macroradiomics/duke/duke_disease_labels.csv")
+DUKE_LABELS   = Path("/scratch/railabs/ld258/output/ct_triage/macroradiomics/duke/duke_disease_labels_consensus.csv")
 DUKE_FEATURES = Path("/scratch/railabs/ld258/output/ct_triage/macroradiomics/duke/features/features_combined.parquet")
 
 # Checkpoint to use (update to your best gated fusion run)

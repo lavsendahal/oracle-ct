@@ -1,0 +1,70 @@
+#!/bin/bash
+#SBATCH --job-name=ABLATION_SCALAR
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:a6000:6
+#SBATCH --cpus-per-task=80
+#SBATCH --output=/home/ld258/ipredict/slurm_logs/miccai_janus/ABLATION_SCALAR-%j.out
+#SBATCH --error=/home/ld258/ipredict/slurm_logs/miccai_janus/ABLATION_SCALAR-%j.err
+
+# ── Change these two lines only ───────────────────────────────────────────────
+SEED=1
+DATASET="duke"   # merlin or duke
+# ─────────────────────────────────────────────────────────────────────────────
+
+PCT="10"
+
+ORIGINAL_CKPT="/scratch/railabs/ld258/output/ct_triage/janus/runs/JanusScalarFusion/2026-02-11_11-02-50_seed25/checkpoints/scalar_fusion_best_macro_auc0.8332.pt"
+PERTURBED_PARQUET="/scratch/railabs/ld258/output/ct_triage/janus/ablation/perturbed/${DATASET}/features_perturbed_pct${PCT}_seed${SEED}.parquet"
+SEED_OUT_DIR="/scratch/railabs/ld258/output/ct_triage/janus/ablation/results_scalar_fusion/${DATASET}/pct${PCT}/seed${SEED}"
+
+# Copy checkpoint to a non-"checkpoints"-named folder so inference.py
+# writes to SEED_OUT_DIR instead of next to the original training run
+ABLATION_CKPT="/scratch/railabs/ld258/output/ct_triage/janus/ablation/scalar_ablation_ckpt/model.pt"
+mkdir -p "$(dirname $ABLATION_CKPT)"
+if [ ! -f "$ABLATION_CKPT" ]; then
+    cp "$ORIGINAL_CKPT" "$ABLATION_CKPT"
+    echo "Checkpoint copied -> $ABLATION_CKPT"
+fi
+
+mkdir -p "$SEED_OUT_DIR"
+
+# ── Environment ───────────────────────────────────────────────────────────────
+module load miniconda/py39_4.12.0
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate fvlm
+
+export PYTHONPATH=$IPREDICT_ROOT/neuro_symbolic/:$PYTHONPATH
+export MASTER_ADDR=$(hostname -s)
+export MASTER_PORT=$((10000 + RANDOM % 50000))
+export HF_TOKEN=$HUGGINGFACE_HUB_TOKEN
+export HF_HOME=$SCRATCH/hf_home
+export HF_HUB_CACHE=$HF_HOME/hub
+
+NGPUS=${NGPUS:-$(nvidia-smi -L | wc -l)}
+export OMP_NUM_THREADS=3
+export MKL_NUM_THREADS=3
+
+echo "========================================"
+echo "JANUS Ablation Inference — ScalarFusion"
+echo "========================================"
+echo "Seed              : $SEED"
+echo "Dataset           : $DATASET"
+echo "Checkpoint        : $ABLATION_CKPT"
+echo "Perturbed parquet : $PERTURBED_PARQUET"
+echo "Output dir        : $SEED_OUT_DIR"
+echo "Num GPUs          : $NGPUS"
+echo "========================================"
+
+torchrun \
+    --standalone \
+    --nnodes=1 \
+    --nproc_per_node=$NGPUS \
+    /home/ld258/ipredict/janus/inference.py \
+    dataset=$DATASET \
+    experiment=dinov3_scalar_fusion \
+    paths.checkpoint=$ABLATION_CKPT \
+    paths.features_parquet=$PERTURBED_PARQUET \
+    hydra.run.dir=$SEED_OUT_DIR \
+    +inference.split=test \
+    logging.use_wandb=false \
+    training.use_ddp=true

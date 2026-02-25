@@ -979,7 +979,7 @@ class JanusScalarFusion(nn.Module):
         return self
 
     
-    def forward(self, batch: Dict[str, Any]) -> torch.Tensor:
+    def forward(self, batch: Dict[str, Any], **kwargs) -> torch.Tensor:
         image = batch["image"]
         masks = batch["masks"]
         features_rows = batch.get("features_row", [None] * image.size(0))  # List[pd.Series] from parquet
