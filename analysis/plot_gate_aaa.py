@@ -45,7 +45,7 @@ plt.rcParams.update({
     'font.family': 'sans-serif',
     'font.sans-serif': ['Arial', 'Helvetica', 'DejaVu Sans'],
     'font.size': 16,
-    'axes.labelsize': 18,
+    'axes.labelsize': 16,
     'axes.titlesize': 19,
     'legend.fontsize': 12,
     'xtick.labelsize': 16,
@@ -225,7 +225,7 @@ def make_figure(gate, labels, scalar, dataset, out_dir):
     pd.DataFrame(stats_rows).to_csv(out_dir / f"gate_aaa_stats_{dataset}.csv", index=False)
 
     # ── Figures ───────────────────────────────────────────────────────────────
-    scalar_display = "Aorta Vessel Maximum Diameter"
+    scalar_display = "Aorta Maximum Diameter (mm)"
     dir_arrow = "↓" if direction == "suppressed" else "↑"
 
     def _save(fig, stem):
@@ -249,8 +249,8 @@ def make_figure(gate, labels, scalar, dataset, out_dir):
     parts["cmins"].set_color("gray")
 
     ax1.set_xticks([0, 1])
-    ax1.set_xticklabels([f"Negative\n(n={n_neg})", f"Positive\n(n={n_pos})"], fontsize=16)
-    ax1.set_ylabel("Mean Gate Activation", fontsize=18, fontweight='bold')
+    ax1.set_xticklabels([f"Negative\n(n={n_neg})", f"Positive\n(n={n_pos})"])
+    ax1.set_ylabel("Mean Anatomical Gate Weight", fontweight='bold')
     ax1.set_ylim(0, 1)
     ax1.set_title(f"Gate by Label\nGate Separability AUC={sep_auc:.3f} ({dir_arrow}{direction})",
                   fontsize=19, fontweight="bold")
@@ -280,8 +280,8 @@ def make_figure(gate, labels, scalar, dataset, out_dir):
             ax2.plot(x_line, y_line, color=color, linewidth=2.2,
                      label=f"{lbl_name}  (ρ={res['spearman_r']:.2f}, {p_str})")
 
-    ax2.set_xlabel(scalar_display, fontsize=18, fontweight='bold')
-    ax2.set_ylabel("Mean Gate Activation", fontsize=18, fontweight='bold')
+    ax2.set_xlabel(scalar_display, fontweight='bold')
+    ax2.set_ylabel("Mean Anatomical Gate Weight", fontweight='bold')
     ax2.set_ylim(0, 1)
 
     ax2.legend(fontsize=12, framealpha=0.9)
