@@ -52,6 +52,9 @@ except ImportError:
 from janus.losses import build_loss_from_config, BCEUncertainLoss
 from janus.models.janus_model import (
     JanusGAP, JanusMaskedAttn, JanusScalarFusion, JanusGatedFusion)
+from janus.models.janus_resnet3d_model import (
+    JanusResNet3DGAP, JanusResNet3DMaskedAttn,
+    JanusResNet3DScalarFusion, JanusResNet3DGatedFusion)
 
 from janus.datamodules.dataset import JanusDataset, janus_collate_fn
 from janus.configs.disease_config import load_config_globally, get_all_diseases
@@ -248,9 +251,6 @@ def build_model(cfg: DictConfig) -> nn.Module:
             init_outside=cfg.training.get("init_outside", 0.2),
             feature_stats_path=feature_stats_path,
             use_gradient_checkpointing=cfg.model.get("use_gradient_checkpointing", False),
-            use_residual=cfg.model.get("use_residual", False),
-            debug_scalar_only=cfg.model.get("debug_scalar_only", False),
-            debug_features=cfg.model.get("debug_features", False),
             visual_pooling=cfg.model.get("visual_pooling", "masked_attn"),
             allow_comparative=cfg.model.get("allow_comparative", False),  # Set True for comparative attention
         )
@@ -304,6 +304,64 @@ def build_model(cfg: DictConfig) -> nn.Module:
             resnet_name=cfg.model.get("resnet_name", "resnet50"),
             pretrained=cfg.model.get("pretrained", True),
             use_checkpoint=cfg.model.get("use_gradient_checkpointing", True),
+            feature_stats_path=feature_stats_path,
+        )
+    elif model_name == "JanusResNet3DGAP":
+        model = JanusResNet3DGAP(
+            num_diseases=cfg.model.num_diseases,
+            backbone=cfg.model.get("backbone", "resnet50"),
+            pretrained=cfg.model.get("pretrained", True),
+            use_checkpoint=cfg.model.get("use_checkpoint", True),
+            freeze_backbone=cfg.model.get("freeze_backbone", False),
+        )
+    elif model_name == "JanusResNet3DMaskedAttn":
+        model = JanusResNet3DMaskedAttn(
+            num_diseases=cfg.model.num_diseases,
+            disease_names=cfg.model.get("disease_names", None),
+            backbone=cfg.model.get("backbone", "resnet50"),
+            pretrained=cfg.model.get("pretrained", True),
+            use_checkpoint=cfg.model.get("use_checkpoint", True),
+            freeze_backbone=cfg.model.get("freeze_backbone", False),
+            learn_tau=cfg.model.get("learn_tau", True),
+            init_tau=cfg.model.get("init_tau", 0.7),
+            fixed_tau=cfg.model.get("fixed_tau", 1.0),
+            use_mask_bias=cfg.model.get("use_mask_bias", True),
+            init_inside=cfg.model.get("init_inside", 0.8),
+            init_outside=cfg.model.get("init_outside", 0.2),
+        )
+    elif model_name == "JanusResNet3DScalarFusion":
+        model = JanusResNet3DScalarFusion(
+            num_diseases=cfg.model.num_diseases,
+            disease_names=cfg.model.get("disease_names", None),
+            backbone=cfg.model.get("backbone", "resnet50"),
+            pretrained=cfg.model.get("pretrained", True),
+            use_checkpoint=cfg.model.get("use_checkpoint", True),
+            freeze_backbone=cfg.model.get("freeze_backbone", False),
+            learn_tau=cfg.model.get("learn_tau", True),
+            init_tau=cfg.model.get("init_tau", 0.7),
+            fixed_tau=cfg.model.get("fixed_tau", 1.0),
+            use_mask_bias=cfg.model.get("use_mask_bias", True),
+            init_inside=cfg.model.get("init_inside", 0.8),
+            init_outside=cfg.model.get("init_outside", 0.2),
+            visual_proj_dim=cfg.model.get("visual_proj_dim", 256),
+            scalar_proj_dim=cfg.model.get("scalar_proj_dim", 256),
+            fusion_hidden=cfg.model.get("fusion_hidden", 256),
+            feature_stats_path=feature_stats_path,
+        )
+    elif model_name == "JanusResNet3DGatedFusion":
+        model = JanusResNet3DGatedFusion(
+            num_diseases=cfg.model.num_diseases,
+            disease_names=cfg.model.get("disease_names", None),
+            backbone=cfg.model.get("backbone", "resnet50"),
+            pretrained=cfg.model.get("pretrained", True),
+            use_checkpoint=cfg.model.get("use_checkpoint", True),
+            freeze_backbone=cfg.model.get("freeze_backbone", False),
+            learn_tau=cfg.model.get("learn_tau", True),
+            init_tau=cfg.model.get("init_tau", 0.7),
+            fixed_tau=cfg.model.get("fixed_tau", 1.0),
+            use_mask_bias=cfg.model.get("use_mask_bias", True),
+            init_inside=cfg.model.get("init_inside", 0.8),
+            init_outside=cfg.model.get("init_outside", 0.2),
             feature_stats_path=feature_stats_path,
         )
     else:
@@ -871,25 +929,6 @@ def main(cfg: DictConfig):
     model = build_model(cfg)
     model = model.to(device)
 
-    # Optionally load pretrained LR weights for scalar heads (GatedFusion with use_residual=True only)
-    if cfg.model.name == "JanusGatedFusion" and cfg.model.get("load_lr_weights", False):
-        if cfg.model.get("use_residual", False):
-            # use_residual=True creates separate scalar heads that can load LR weights
-            if is_main_process():
-                print("\nLoading pretrained LR weights for scalar heads...")
-            lr_weights_path = cfg.paths.get("lr_weights")
-            freeze_scalar = cfg.model.get("freeze_scalar_heads", False)
-            if lr_weights_path:
-                model.load_pretrained_scalar_heads(lr_weights_path, freeze=freeze_scalar)
-            else:
-                if is_main_process():
-                    print("  ⚠️  Warning: load_lr_weights=True but lr_weights path not found in config")
-        else:
-            # use_residual=False: gating-only architecture, no scalar heads to load
-            if is_main_process():
-                print("\n✓ Gating-only mode (use_residual=False): Scalar features used for gating, not LR heads")
-                print("  LR weight loading skipped (no separate scalar heads in this architecture)")
-
     # Wrap model in DDP
     if use_ddp and dist.is_initialized():
         model = nn.parallel.DistributedDataParallel(
@@ -1160,63 +1199,6 @@ def main(cfg: DictConfig):
         # Set epoch for DistributedSampler (ensures different shuffle each epoch)
         if use_ddp and train_sampler is not None:
             train_sampler.set_epoch(epoch)
-
-        # Unfreeze scalar heads after warm-start (GatedFusion only)
-        unfreeze_epoch = cfg.model.get("unfreeze_scalar_heads_epoch", 10)
-        if (cfg.model.name == "JanusGatedFusion" and
-            cfg.model.get("freeze_scalar_heads", False) and
-            epoch == unfreeze_epoch):
-            if is_main_process():
-                print(f"\n{'='*80}")
-                print(f"Epoch {epoch}: Unfreezing scalar heads for fine-tuning")
-                print(f"{'='*80}\n")
-
-            # Get unwrapped model
-            unwrapped_model = model.module if isinstance(model, nn.parallel.DistributedDataParallel) else model
-
-            # Unfreeze scalar head parameters
-            if hasattr(unwrapped_model, 'heads_scalar'):
-                for disease, head in unwrapped_model.heads_scalar.items():
-                    if head is not None:
-                        for param in head.parameters():
-                            param.requires_grad = True
-
-            # Rebuild optimizer to include newly unfrozen parameters
-            # (Optimizer won't update params that weren't in its param_groups initially)
-            if is_main_process():
-                print("Rebuilding optimizer to include scalar head parameters...")
-
-            # Re-create optimizer with same logic as before
-            if use_group_lrs:
-                unwrapped_model = model.module if isinstance(model, nn.parallel.DistributedDataParallel) else model
-                backbone_params = []
-                alpha_params = []
-                head_params = []
-
-                for name, param in unwrapped_model.named_parameters():
-                    if not param.requires_grad:
-                        continue
-                    if name.startswith("backbone."):
-                        backbone_params.append(param)
-                    elif any(key in name for key in ["temp_logit", "inside_logit", "outside_logit", "border_gate_logit", "border_gate", "visual_gate_logit", "scalar_gate_logit"]):
-                        alpha_params.append(param)
-                    else:
-                        head_params.append(param)
-
-                param_groups = [
-                    {"params": backbone_params, "lr": base_lr, "name": "backbone"},
-                    {"params": head_params, "lr": base_lr * head_lr_scale, "name": "heads"},
-                    {"params": alpha_params, "lr": base_lr * alpha_lr_scale, "name": "alpha"},
-                ]
-                optimizer = torch.optim.AdamW(param_groups, weight_decay=weight_decay)
-            else:
-                optimizer = torch.optim.AdamW(model.parameters(), lr=base_lr, weight_decay=weight_decay)
-
-            # Rebuild scheduler
-            scheduler = build_scheduler(optimizer, cfg, len(train_loader))
-
-            if is_main_process():
-                print("✓ Optimizer and scheduler rebuilt with unfrozen scalar heads\n")
 
         # Train
         train_loss = train_epoch(model, train_loader, optimizer, criterion, device, epoch, cfg, scheduler=scheduler)

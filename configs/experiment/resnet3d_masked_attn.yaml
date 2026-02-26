@@ -1,0 +1,35 @@
+# @package _global_
+
+# 3D ResNet Masked Attention experiment: JanusResNet3DMaskedAttn
+#
+# Organ-specific attention per disease with learnable priors — no scalar features.
+# Inflated ResNet50 (I3D) pretrained on ImageNet processes [B,1,D,H,W] directly.
+#
+# Pyramid features: f3(1024) + f4(2048) = 3072-dim per disease via 3D masked attention.
+# Score convs: Conv3d(3072, 1, 1) per disease applied to spatial feature map.
+
+model:
+  name: JanusResNet3DMaskedAttn
+  backbone: resnet152        # resnet50 | resnet101 | resnet152
+  pretrained: true          # Initialize with ImageNet weights (inflated to 3D)
+  use_checkpoint: true      # Gradient checkpointing in trunk (saves memory)
+  num_diseases: 30
+  disease_names: null       # null = use first 30 from ALL_DISEASES
+  freeze_backbone: false
+  learn_tau: true
+  init_tau: 0.7
+  use_mask_bias: true
+  init_inside: 0.8
+  init_outside: 0.2
+
+training:
+  max_epochs: 20
+  # Learnable priors (defined in config.yaml, can override here if needed)
+  # learn_tau: true
+  # init_tau: 0.7
+  # use_mask_bias: true
+  # init_inside: 0.8
+  # init_outside: 0.2
+
+logging:
+  use_wandb: false

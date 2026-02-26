@@ -1167,9 +1167,6 @@ class JanusGatedFusion(nn.Module):
         init_outside: float = 0.2,
         feature_stats_path: Optional[str] = None,
         use_gradient_checkpointing: bool = False,
-        use_residual: bool = False,  # Optionally concatenate raw scalars after gating
-        debug_scalar_only: bool = False,
-        debug_features: bool = False,
         visual_pooling: str = "masked_attn",  # "masked_attn" or "gap"
         allow_comparative: bool = False,  # Set True to use comparative attention for steatosis
     ):
@@ -1184,16 +1181,11 @@ class JanusGatedFusion(nn.Module):
         self.fixed_tau = fixed_tau
         self.use_mask_bias = use_mask_bias
         self.variant = variant.upper()
-        self.use_residual = use_residual
         self.visual_pooling = visual_pooling
         self.allow_comparative = allow_comparative
 
         if self.visual_pooling not in {"masked_attn", "gap"}:
             raise ValueError(f"Invalid visual_pooling='{self.visual_pooling}'. Must be 'masked_attn' or 'gap'.")
-
-        # Debug options (useful for LR-baseline reproduction)
-        self.debug_scalar_only = debug_scalar_only
-        self.debug_features = debug_features
 
         # Feature bank for scalar features
         self.feature_bank = FeatureBank(
@@ -1233,9 +1225,7 @@ class JanusGatedFusion(nn.Module):
         # Per-disease components: Attention MLPs (masked_attn only) + Gates + Dual Heads
         self.score_mlps = nn.ModuleDict()
         self.gating_modules = nn.ModuleDict()
-        self.heads_visual = nn.ModuleDict()   # Visual pathway head
-        self.heads_scalar = nn.ModuleDict()   # Scalar pathway head (logistic regression)
-        self.alpha_scalar = nn.ParameterDict()  # Learnable mixture weights
+        self.heads_visual = nn.ModuleDict()
 
         # Learnable priors (bias and temperature) - only used for masked attention pooling
         if self.visual_pooling == "masked_attn":
@@ -1277,169 +1267,20 @@ class JanusGatedFusion(nn.Module):
             else:
                 visual_dim = self.hidden_dim  # 768
 
-            # BUGFIX: Only register modules if scalars exist (ModuleDict cannot store None)
             if num_scalars > 0:
-                # Create the Anatomical Gate
-                # Projects scalars (e.g., 10) -> visual dim (768 or 1536 for comparative)
                 self.gating_modules[disease] = AnatomicallyGuidedGate(
                     visual_dim=visual_dim,
                     scalar_dim=num_scalars
                 )
 
-                # Dual-head architecture: separate heads for visual and scalar
-                # This GUARANTEES we can match logistic regression baseline
-                if self.use_residual:
-                    # Visual head: gated visual features -> logit
-                    # Initialize to output zero so it doesn't interfere with pretrained LR baseline
-                    self.heads_visual[disease] = nn.Linear(visual_dim, 1)
-                    nn.init.zeros_(self.heads_visual[disease].weight)
-                    nn.init.zeros_(self.heads_visual[disease].bias)
+            self.heads_visual[disease] = nn.Linear(visual_dim, 1)
 
-                    # Scalar head: raw scalars -> logit (this IS logistic regression)
-                    self.heads_scalar[disease] = nn.Linear(num_scalars, 1)
-
-                    # Learnable mixture weight (initialized to 1.0 for balanced contribution)
-                    self.alpha_scalar[disease] = nn.Parameter(torch.tensor(1.0))
-                else:
-                    # No residual: single head on gated visual only
-                    self.heads_visual[disease] = nn.Linear(visual_dim, 1)
-                    # Note: heads_scalar not registered for this disease (no residual)
-            else:
-                # No scalars: visual-only head
-                # Note: gating_modules, heads_scalar not registered for this disease
-                self.heads_visual[disease] = nn.Linear(visual_dim, 1)
-
-        residual_str = " + Residual (Dual-Head)" if self.use_residual else ""
         pooling_str = "MaskedAttn" if self.visual_pooling == "masked_attn" else "GAP"
-        print(f"✓ Anatomically Guided Gating ({pooling_str}): Scalars gate Visual ({self.hidden_dim}d){residual_str}")
+        print(f"✓ Anatomically Guided Gating ({pooling_str}): Scalars gate Visual ({self.hidden_dim}d)")
 
         # Normalization buffers
         self.register_buffer("_mean", torch.tensor(IMN_MEAN).view(1, 1, 3, 1, 1))
         self.register_buffer("_std", torch.tensor(IMN_STD).view(1, 1, 3, 1, 1))
-
-    def load_pretrained_scalar_heads(self, lr_weights_path: str, freeze: bool = False):
-        """
-        Initialize scalar heads with pretrained logistic regression weights.
-
-        This ensures the scalar pathway starts from a strong baseline and guarantees
-        the model can at least match logistic regression performance.
-
-        Args:
-            lr_weights_path: Path to JSON with LR weights per disease
-                Format: {disease: {"weight": [...], "bias": float, "features": [...]}}
-            freeze: If True, freeze scalar heads for initial training epochs
-        """
-        import json
-        from pathlib import Path
-
-        if not Path(lr_weights_path).exists():
-            print(f"Warning: LR weights file not found: {lr_weights_path}")
-            return
-
-        with open(lr_weights_path, "r") as f:
-            lr_weights = json.load(f)
-
-        loaded_count = 0
-        mismatch_count = 0
-
-        for disease in self.disease_names:
-            if disease not in lr_weights:
-                print(f"  ⚠️  {disease}: No LR weights found, skipping")
-                continue
-
-            if disease not in self.heads_scalar:
-                continue  # No scalar head for this disease (visual-only)
-
-            weights_dict = lr_weights[disease]
-            # Support both old format (features/weight) and new format (feature_names/weights)
-            lr_features = weights_dict.get("feature_names", weights_dict.get("features", []))
-            lr_weight_list = weights_dict.get("weights", weights_dict.get("weight", []))
-            lr_bias = weights_dict["bias"]
-
-            # Get the model's expected feature order from disease configs
-            disease_configs = get_all_disease_configs()
-            config = disease_configs.get(disease)
-            if config is None:
-                print(f"  ⚠️  {disease}: No config found, skipping")
-                mismatch_count += 1
-                continue
-
-            # Model's canonical feature order (what FeatureBank returns)
-            model_feature_order = config.scalar_features + config.derived_features
-
-            # CRITICAL: Verify feature count matches (must be IDENTICAL to LR)
-            expected_features = self.heads_scalar[disease].in_features
-            if len(lr_features) != expected_features:
-                print(f"  ⚠️  {disease}: Feature mismatch! LR has {len(lr_features)} features, "
-                      f"but model expects {expected_features}")
-                mismatch_count += 1
-                continue
-
-            # CRITICAL FIX: Reorder LR weights to match model's feature order
-            # Build mapping from feature name to weight
-            lr_weight_map = {feat: weight for feat, weight in zip(lr_features, lr_weight_list)}
-
-            # Check for feature order mismatch
-            if lr_features != model_feature_order:
-                print(f"  ⚠️  {disease}: Feature ORDER mismatch detected! Reordering...")
-                print(f"      LR order: {lr_features[:3]}...")
-                print(f"      Model order: {model_feature_order[:3]}...")
-
-            # Reorder weights to match model's expected order
-            reordered_weights = []
-            missing_features = []
-            for feat in model_feature_order:
-                if feat in lr_weight_map:
-                    reordered_weights.append(lr_weight_map[feat])
-                else:
-                    reordered_weights.append(0.0)  # Missing feature gets zero weight
-                    missing_features.append(feat)
-
-            if missing_features:
-                print(f"  ⚠️  {disease}: {len(missing_features)} features missing from LR weights: {missing_features[:3]}...")
-                mismatch_count += 1
-                continue
-
-            # Use LR weights directly (NO presence indicators - must match LR baseline exactly)
-            weight_tensor = torch.tensor(reordered_weights, dtype=torch.float32).unsqueeze(0)  # [1, num_features]
-            bias_tensor = torch.tensor([lr_bias], dtype=torch.float32)  # [1]
-
-            # Initialize scalar head with expanded LR weights
-            # Sanity check dimensions
-            if weight_tensor.shape[1] != self.heads_scalar[disease].in_features:
-                print(f"  ⚠️  {disease}: Weight dimension mismatch!")
-                print(f"      Expected: {self.heads_scalar[disease].in_features}, Got: {weight_tensor.shape[1]}")
-                mismatch_count += 1
-                continue
-
-            with torch.no_grad():
-                self.heads_scalar[disease].weight.copy_(weight_tensor)
-                self.heads_scalar[disease].bias.copy_(bias_tensor)
-
-            # Optionally freeze for warm-start
-            if freeze:
-                for param in self.heads_scalar[disease].parameters():
-                    param.requires_grad = False
-
-            loaded_count += 1
-
-            # Debug: Print weight loading info for all diseases
-            print(f"  {disease}:")
-            print(f"    Features: {len(lr_features)}, Order matches: {lr_features == model_feature_order}")
-            print(f"    Weights: min={min(reordered_weights):.4f}, max={max(reordered_weights):.4f}, mean={sum(reordered_weights)/len(reordered_weights):.4f}, bias={lr_bias:.4f}")
-
-        freeze_str = " (frozen)" if freeze else ""
-        print(f"✓ Loaded pretrained LR weights for {loaded_count}/{len(self.disease_names)} diseases{freeze_str}")
-        if mismatch_count > 0:
-            print(f"  ⚠️  {mismatch_count} diseases had feature mismatches and were not initialized")
-
-        # DEBUG: Print scalar-only mode status
-        if self.debug_scalar_only:
-            print(f"\n{'='*80}")
-            print(f"⚠️  DEBUG MODE: SCALAR-ONLY FORCED (visual pathway bypassed)")
-            print(f"   This will test if LR weights reproduce baseline performance")
-            print(f"   Expected Val AUC: 0.8196 (macro), 0.9338 (hepatomegaly)")
-            print(f"{'='*80}\n")
 
     def _normalize(self, x: torch.Tensor) -> torch.Tensor:
         return (x - self._mean) / self._std
@@ -1642,76 +1483,10 @@ class JanusGatedFusion(nn.Module):
                     # This answers: "What would the model predict without gating?"
                     ungated_visual = visual_features  # No gating applied
 
-                # Dual-head classification: visual + scalar pathways
-                if self.use_residual and disease in self.heads_scalar:
-                    # Visual pathway: gated features
-                    logit_visual = self.heads_visual[disease](gated_visual)  # [B, 1]
+                logit = self.heads_visual[disease](gated_visual)
 
-                    # Scalar pathway: raw scalars (already z-score normalized by FeatureBank!)
-                    # CRITICAL: Do NOT apply additional normalization - LR weights expect z-scores
-                    logit_scalar = self.heads_scalar[disease](scalar_features)  # [B, 1]
-
-                    # Debug: Print predictions for ALL diseases with feature breakdown
-                    if debug_features:
-                        print(f"  Predictions (first 2 samples):")
-                        print(f"    Visual logits: {logit_visual[:2].detach().cpu().squeeze().numpy()}")
-                        print(f"    Scalar logits: {logit_scalar[:2].detach().cpu().squeeze().numpy()}")
-                        print(f"    Alpha_scalar: {self.alpha_scalar[disease].item():.4f}")
-                        print(f"    Combined: {(logit_visual[:2] + self.alpha_scalar[disease] * logit_scalar[:2]).detach().cpu().squeeze().numpy()}")
-
-                        # Show feature breakdown for first sample
-                        print(f"\n  Feature contributions (Sample 0):")
-                        weights = self.heads_scalar[disease].weight.detach().cpu().squeeze().numpy()
-                        bias = self.heads_scalar[disease].bias.detach().cpu().item()
-                        feats_0 = scalar_features_list[0].cpu().numpy()
-                        names_0 = feature_names_list[0]
-
-                        # Compute weighted contributions
-                        contributions = []
-                        for i in range(0, min(10, len(feats_0))):  # First 10 features
-                            feat_name = names_0[i] if i < len(names_0) else f"feat_{i}"
-                            feat_val = feats_0[i]
-                            feat_weight = weights[i]
-                            contribution = feat_val * feat_weight
-                            contributions.append((feat_name, feat_val, feat_weight, contribution))
-
-                        # Sort by absolute contribution
-                        contributions.sort(key=lambda x: abs(x[3]), reverse=True)
-
-                        for feat_name, feat_val, feat_weight, contrib in contributions:
-                            print(f"    {feat_name:40s}: val={feat_val:7.3f} × weight={feat_weight:7.3f} = {contrib:7.3f}")
-
-                        print(f"    {'Bias':40s}:                              = {bias:7.3f}")
-
-                        # CRITICAL: Manually compute logit and compare
-                        manual_logit = (feats_0 * weights).sum() + bias
-                        model_logit = logit_scalar[0].item()
-                        print(f"    {'MANUAL COMPUTATION':40s}:                              = {manual_logit:7.3f}")
-                        print(f"    {'MODEL OUTPUT':40s}:                              = {model_logit:7.3f}")
-                        if abs(manual_logit - model_logit) > 0.01:
-                            print(f"    ⚠️  MISMATCH! Manual ≠ Model (diff={abs(manual_logit - model_logit):.3f})")
-
-                    # DEBUG: Force scalar-only for LR weight verification
-                    if self.debug_scalar_only:
-                        # SCALAR ONLY - bypass visual completely to test LR weights
-                        logit = logit_scalar
-                        if return_ungated:
-                            logit_ungated = logit_scalar  # Same when scalar-only
-                    else:
-                        # Combine: additive mixture with learnable weight
-                        logit = logit_visual + self.alpha_scalar[disease] * logit_scalar
-
-                        # UNGATED: Use visual_features directly (no gating) + scalar
-                        if return_ungated:
-                            logit_visual_ungated = self.heads_visual[disease](ungated_visual)
-                            logit_ungated = logit_visual_ungated + self.alpha_scalar[disease] * logit_scalar
-                else:
-                    # No residual: visual pathway only
-                    logit = self.heads_visual[disease](gated_visual)
-
-                    # UNGATED: Use visual_features directly (no gating)
-                    if return_ungated:
-                        logit_ungated = self.heads_visual[disease](ungated_visual)
+                if return_ungated:
+                    logit_ungated = self.heads_visual[disease](ungated_visual)
             else:
                 # No scalars for this disease - use visual only (no gating possible)
                 logit = self.heads_visual[disease](visual_features)

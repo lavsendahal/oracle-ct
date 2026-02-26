@@ -1,0 +1,40 @@
+# @package _global_
+
+# 3D ResNet Scalar Fusion experiment: JanusResNet3DScalarFusion
+#
+# Full neuro-symbolic: visual features + scalar features + fusion MLP.
+# Inflated ResNet50 (I3D) pretrained on ImageNet processes [B,1,D,H,W] directly.
+#
+# Pyramid features: f3(1024) + f4(2048) = 3072-dim per disease via 3D masked attention.
+# Visual projected to visual_proj_dim, scalars projected to scalar_proj_dim,
+# both concatenated and passed through fusion MLP → logit.
+
+model:
+  name: JanusResNet3DScalarFusion
+  backbone: resnet152        # resnet50 | resnet101 | resnet152
+  pretrained: true          # Initialize with ImageNet weights (inflated to 3D)
+  use_checkpoint: true      # Gradient checkpointing in trunk (saves memory)
+  num_diseases: 30
+  disease_names: null       # null = use first 30 from ALL_DISEASES
+  freeze_backbone: false
+  learn_tau: true
+  init_tau: 0.7
+  use_mask_bias: true
+  init_inside: 0.8
+  init_outside: 0.2
+  fusion_hidden: 256
+  visual_proj_dim: 256      # Project 3072-dim visual features before fusion
+  scalar_proj_dim: 256      # Project scalar features before fusion
+  feature_stats_path: ${paths.feature_stats}
+
+training:
+  max_epochs: 20
+  # Learnable priors (defined in config.yaml, can override here if needed)
+  # learn_tau: true
+  # init_tau: 0.7
+  # use_mask_bias: true
+  # init_inside: 0.8
+  # init_outside: 0.2
+
+logging:
+  use_wandb: false

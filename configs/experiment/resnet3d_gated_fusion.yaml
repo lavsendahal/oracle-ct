@@ -1,0 +1,36 @@
+# @package _global_
+
+# 3D ResNet Gated Fusion experiment: JanusResNet3DGatedFusion
+#
+# Native 3D ResNet backbone (no tri-slice) + Anatomically Guided Gating.
+# Inflated ResNet50 (I3D) pretrained on ImageNet processes [B,1,D,H,W] directly.
+#
+# Pyramid features: f3(1024) + f4(2048) = 3072-dim per disease via 3D masked attention.
+# Scalar gating: same AnatomicallyGuidedGate as JanusGatedFusion.
+#
+# Key differences vs dinov3_gated_fusion:
+# - No tri_stride / image_size (full 3D volume processed natively)
+# - backbone: resnet50 (or resnet101 / resnet152)
+# - hidden_dim: 3072 (1024+2048 pyramid), vs 768 for DINOv3-B
+
+model:
+  name: JanusResNet3DGatedFusion
+  backbone: resnet152        # resnet50 | resnet101 | resnet152
+  pretrained: true          # Initialize with ImageNet weights (inflated to 3D)
+  use_checkpoint: true      # Gradient checkpointing in trunk (saves memory)
+  num_diseases: 30
+  disease_names: null
+  freeze_backbone: false
+  learn_tau: true
+  init_tau: 0.7
+  fixed_tau: 1.0
+  use_mask_bias: true
+  init_inside: 0.8
+  init_outside: 0.2
+  # feature_stats_path uses paths.feature_stats from config.yaml
+
+training:
+  max_epochs: 20
+
+logging:
+  use_wandb: false
