@@ -47,8 +47,8 @@ dataset:
       p_affine: 0.35
       rot_deg: 10.0
       translate_xy: 5.0
-      scale_min: 0.95
-      scale_max: 1.05
+      scale_min: 0.99
+      scale_max: 1.01
       allow_flip_w: false
       allow_flip_h: false
       allow_flip_d: false

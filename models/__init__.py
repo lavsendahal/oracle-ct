@@ -1,7 +1,7 @@
 # janus/models/__init__.py
 """Janus Model Components"""
 
-from .janus_model import (
+from .dinov3_oracle_ct import (
     JanusGAP,
     JanusMaskedAttn,
     JanusScalarFusion,

@@ -51,7 +51,7 @@ from ..configs.disease_config import (
     get_all_diseases,
 )
 from ..datamodules.feature_bank import FeatureBank
-from .janus_model import (
+from .dinov3_oracle_ct import (
     AnatomicallyGuidedGate,
     get_attention_mask_for_disease,
     dilate_mask_adaptive,
