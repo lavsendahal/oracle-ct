@@ -20,8 +20,6 @@ Four model variants (mirrors janus_model.py for DINOv3):
 1. JanusResNet3DGAP:          Inflated ResNet50 + Global Average Pooling (baseline)
 2. JanusResNet3DMaskedAttn:   Inflated ResNet50 + 3D Organ-Masked Attention
 3. JanusResNet3DScalarFusion: Inflated ResNet50 + 3D Masked Attention + Scalar Fusion
-4. JanusResNet3DGatedFusion:  Inflated ResNet50 + 3D Masked Attention + Anatomical Gating
-
 Key difference from DINOv3 JANUS (janus_model.py):
 - No tri-slice conversion — processes full 3D CT volume [B,1,D,H,W] natively
 - I3D inflation: pretrained 2D ImageNet ResNet50 weights inflated to 3D
@@ -30,7 +28,6 @@ Key difference from DINOv3 JANUS (janus_model.py):
 - Return interface is identical — inference.py and train.py work unchanged
 
 Usage:
-    python janus/train.py experiment=resnet3d_gated_fusion dataset=merlin
     python janus/train.py experiment=resnet3d_scalar_fusion dataset=merlin
     python janus/train.py experiment=resnet3d_masked_attn dataset=merlin
     python janus/train.py experiment=resnet3d_baseline_gap dataset=merlin
@@ -52,7 +49,6 @@ from ..configs.disease_config import (
 )
 from ..datamodules.feature_bank import FeatureBank
 from .dinov3_oracle_ct import (
-    AnatomicallyGuidedGate,
     get_attention_mask_for_disease,
     dilate_mask_adaptive,
     create_roi_mask,
@@ -690,186 +686,3 @@ class JanusResNet3DScalarFusion(nn.Module):
 
         return torch.cat(logits_list, dim=1)
 
-
-# =============================================================================
-# MODEL 4: 3D GATED FUSION
-# =============================================================================
-
-class JanusResNet3DGatedFusion(nn.Module):
-    """
-    Inflated ResNet50 + 3D Masked Attention + Anatomically Guided Gating
-
-    Scalar priors gate (element-wise modulate) the 3072-dim pyramid visual features.
-    Same gating mechanism as JanusGatedFusion (DINOv3).
-    Return interface is identical — inference.py works unchanged.
-    """
-
-    def __init__(
-        self,
-        num_diseases:    int   = 30,
-        disease_names:   List[str] = None,
-        backbone:        str   = "resnet50",
-        pretrained:      bool  = True,
-        use_checkpoint:  bool  = True,
-        freeze_backbone: bool  = False,
-        learn_tau:       bool  = True,
-        init_tau:        float = 0.7,
-        fixed_tau:       float = 1.0,
-        use_mask_bias:   bool  = True,
-        init_inside:     float = 0.8,
-        init_outside:    float = 0.2,
-        feature_stats_path: Optional[str] = None,
-    ):
-        super().__init__()
-        self.num_diseases    = num_diseases
-        self.disease_names   = disease_names or get_all_diseases()[:num_diseases]
-        self.learn_tau       = learn_tau
-        self.fixed_tau       = fixed_tau
-        self.use_mask_bias   = use_mask_bias
-        self.freeze_backbone = freeze_backbone
-
-        self.trunk, self._ch3, self._ch4 = _build_trunk(backbone, pretrained, use_checkpoint)
-        self.hidden_dim = self._ch3 + self._ch4   # 3072
-
-        if freeze_backbone:
-            for p in self.trunk.parameters():
-                p.requires_grad = False
-            self.trunk.eval()
-
-        self.feature_bank = FeatureBank(stats_path=feature_stats_path, normalize="zscore")
-
-        # Per-disease modules
-        self.score_convs_f3 = nn.ModuleDict()
-        self.score_convs_f4 = nn.ModuleDict()
-        self.gating_modules = nn.ModuleDict()
-        self.heads_visual   = nn.ModuleDict()
-
-        if use_mask_bias:
-            self.inside_logit  = nn.ParameterDict()
-            self.outside_logit = nn.ParameterDict()
-        if learn_tau:
-            self.temp_logit = nn.ParameterDict()
-
-        disease_configs = get_all_disease_configs()
-
-        for disease in self.disease_names:
-            self.score_convs_f3[disease] = nn.Conv3d(self._ch3, 1, kernel_size=1, bias=True)
-            self.score_convs_f4[disease] = nn.Conv3d(self._ch4, 1, kernel_size=1, bias=True)
-
-            if use_mask_bias:
-                self.inside_logit[disease]  = nn.Parameter(torch.tensor(to_logit(init_inside)))
-                self.outside_logit[disease] = nn.Parameter(torch.tensor(to_logit(init_outside)))
-            if learn_tau:
-                self.temp_logit[disease] = nn.Parameter(torch.tensor(inv_sigmoid_temp(init_tau)))
-
-            config = disease_configs.get(disease)
-            num_scalars = (
-                len(config.scalar_features) + len(config.derived_features)
-            ) if config else 0
-
-            if num_scalars > 0:
-                self.gating_modules[disease] = AnatomicallyGuidedGate(
-                    visual_dim=self.hidden_dim,
-                    scalar_dim=num_scalars,
-                )
-
-            self.heads_visual[disease] = nn.Linear(self.hidden_dim, 1)
-
-        self.register_buffer("_mean", torch.tensor(IMN_MEAN).view(1, 3, 1, 1, 1))
-        self.register_buffer("_std",  torch.tensor(IMN_STD).view(1, 3, 1, 1, 1))
-
-        print(f"✓ JanusResNet3DGatedFusion: {backbone} → "
-              f"f3({self._ch3})+f4({self._ch4})={self.hidden_dim}d → Anatomical Gating")
-
-    def _normalize(self, x: torch.Tensor) -> torch.Tensor:
-        return (x - self._mean) / self._std
-
-    def train(self, mode: bool = True):
-        super().train(mode)
-        if self.freeze_backbone:
-            self.trunk.eval()
-        return self
-
-    def forward(
-        self,
-        batch: Dict[str, Any],
-        return_ungated: bool = False,
-        **kwargs,
-    ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
-        """
-        Forward pass — return interface identical to JanusGatedFusion.
-        return_ungated=True returns {"logits": ..., "logits_ungated": ...} for veto analysis.
-        """
-        image         = batch["image"]
-        masks         = batch["masks"]
-        features_rows = batch.get("features_row", [None] * image.size(0))
-        disease_rois  = batch.get("disease_rois", [{}] * image.size(0))
-        meta          = batch.get("meta",         [{}] * image.size(0))
-
-        B = image.size(0)
-        device = image.device
-
-        image_3ch = image.expand(-1, 3, -1, -1, -1).contiguous()
-        image_3ch = self._normalize(image_3ch)
-        f3, f4    = self.trunk(image_3ch)
-
-        derived_features_batch = [
-            self.feature_bank.compute_derived_features(meta[b], features_row=features_rows[b])
-            for b in range(B)
-        ]
-
-        logits_list         = []
-        logits_ungated_list = [] if return_ungated else None
-
-        for disease in self.disease_names:
-            tau     = (0.2 + 1.8 * torch.sigmoid(self.temp_logit[disease])
-                       if self.learn_tau else self.fixed_tau)
-            bias_in  = self.inside_logit[disease]  if self.use_mask_bias else None
-            bias_out = self.outside_logit[disease] if self.use_mask_bias else None
-
-            attn_mask = get_attention_mask_for_disease(
-                disease, masks, disease_rois, meta, device, allow_comparative=False,
-            )
-
-            p3 = masked_attention_pool_3d(f3, attn_mask, self.score_convs_f3[disease],
-                                          tau=tau, bias_in=bias_in, bias_out=bias_out)
-            p4 = masked_attention_pool_3d(f4, attn_mask, self.score_convs_f4[disease],
-                                          tau=tau, bias_in=bias_in, bias_out=bias_out)
-            visual_features = torch.cat([p3, p4], dim=1)   # [B, 3072]
-
-            if disease in self.gating_modules:
-                scalar_list = [
-                    self.feature_bank.get_features_for_disease(
-                        disease, meta[b], features_row=features_rows[b], normalize=True,
-                        cached_derived=derived_features_batch[b],
-                    )[0].to(device)
-                    for b in range(B)
-                ]
-                scalar_features = torch.stack(scalar_list, dim=0)
-
-                gated_visual = self.gating_modules[disease](visual_features, scalar_features)
-
-                if return_ungated:
-                    ungated_visual = visual_features
-
-                logit = self.heads_visual[disease](gated_visual)
-                if return_ungated:
-                    logit_ungated = self.heads_visual[disease](ungated_visual)
-            else:
-                logit = self.heads_visual[disease](visual_features)
-                if return_ungated:
-                    logit_ungated = logit
-
-            logits_list.append(logit)
-            if return_ungated:
-                logits_ungated_list.append(logit_ungated)
-
-        logits = torch.cat(logits_list, dim=1)
-
-        if return_ungated:
-            return {
-                "logits"         : logits,
-                "logits_ungated" : torch.cat(logits_ungated_list, dim=1),
-            }
-
-        return logits

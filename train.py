@@ -53,10 +53,10 @@ except ImportError:
 
 from janus.losses import build_loss_from_config, BCEUncertainLoss
 from models.dinov3_oracle_ct import (
-    JanusGAP, JanusMaskedAttn, JanusScalarFusion, JanusGatedFusion)
+    JanusGAP, JanusMaskedAttn, JanusScalarFusion)
 from models.resnet3d_oracle_ct import (
     JanusResNet3DGAP, JanusResNet3DMaskedAttn,
-    JanusResNet3DScalarFusion, JanusResNet3DGatedFusion)
+    JanusResNet3DScalarFusion)
 
 from janus.datamodules.dataset import JanusDataset, janus_collate_fn
 from janus.configs.disease_config import load_config_globally, get_all_diseases
@@ -198,7 +198,7 @@ def build_model(cfg: DictConfig) -> nn.Module:
             init_inside=cfg.training.get("init_inside", 0.8),
             init_outside=cfg.training.get("init_outside", 0.2),
             use_gradient_checkpointing=cfg.model.get("use_gradient_checkpointing", False),
-            allow_comparative=cfg.model.get("allow_comparative", False),  # False for fair comparison with GatedFusion
+            allow_comparative=cfg.model.get("allow_comparative", False),
         )
     elif model_name == "JanusScalarFusion":
         model = JanusScalarFusion(
@@ -236,25 +236,6 @@ def build_model(cfg: DictConfig) -> nn.Module:
             feature_stats_path=feature_stats_path,
             use_gradient_checkpointing=cfg.model.get("use_gradient_checkpointing", False),
             debug=cfg.model.get("debug", False),
-        )
-    elif model_name == "JanusGatedFusion":
-        model = JanusGatedFusion(
-            num_diseases=cfg.model.num_diseases,
-            disease_names=cfg.model.get("disease_names", None),
-            variant=cfg.model.variant,
-            image_size=cfg.model.image_size,
-            tri_stride=cfg.model.tri_stride,
-            freeze_backbone=cfg.model.freeze_backbone,
-            learn_tau=cfg.training.get("learn_tau", True),
-            init_tau=cfg.training.get("init_tau", 0.7),
-            fixed_tau=cfg.training.get("fixed_tau", 1.0),
-            use_mask_bias=cfg.training.get("use_mask_bias", True),
-            init_inside=cfg.training.get("init_inside", 0.8),
-            init_outside=cfg.training.get("init_outside", 0.2),
-            feature_stats_path=feature_stats_path,
-            use_gradient_checkpointing=cfg.model.get("use_gradient_checkpointing", False),
-            visual_pooling=cfg.model.get("visual_pooling", "masked_attn"),
-            allow_comparative=cfg.model.get("allow_comparative", False),  # Set True for comparative attention
         )
     elif model_name == "JanusMaskedAttnOracle":
         model = JanusMaskedAttnOracle(
@@ -348,22 +329,6 @@ def build_model(cfg: DictConfig) -> nn.Module:
             visual_proj_dim=cfg.model.get("visual_proj_dim", 256),
             scalar_proj_dim=cfg.model.get("scalar_proj_dim", 256),
             fusion_hidden=cfg.model.get("fusion_hidden", 256),
-            feature_stats_path=feature_stats_path,
-        )
-    elif model_name == "JanusResNet3DGatedFusion":
-        model = JanusResNet3DGatedFusion(
-            num_diseases=cfg.model.num_diseases,
-            disease_names=cfg.model.get("disease_names", None),
-            backbone=cfg.model.get("backbone", "resnet50"),
-            pretrained=cfg.model.get("pretrained", True),
-            use_checkpoint=cfg.model.get("use_checkpoint", True),
-            freeze_backbone=cfg.model.get("freeze_backbone", False),
-            learn_tau=cfg.model.get("learn_tau", True),
-            init_tau=cfg.model.get("init_tau", 0.7),
-            fixed_tau=cfg.model.get("fixed_tau", 1.0),
-            use_mask_bias=cfg.model.get("use_mask_bias", True),
-            init_inside=cfg.model.get("init_inside", 0.8),
-            init_outside=cfg.model.get("init_outside", 0.2),
             feature_stats_path=feature_stats_path,
         )
     else:
@@ -807,10 +772,10 @@ def main(cfg: DictConfig):
     if is_main_process():
         print("\nBuilding datasets...")
 
-    # Only load features for ScalarFusion and GatedFusion models
+    # Only load features for ScalarFusion models
     features_parquet = None
     feature_columns = None
-    if cfg.model.name in ["JanusScalarFusion", "JanusScalarFusionVolume", "JanusGatedFusion", "JanusI3D_ScalarFusion", "JanusScalarFusionOracle"]:
+    if cfg.model.name in ["JanusScalarFusion", "JanusScalarFusionVolume", "JanusI3D_ScalarFusion", "JanusScalarFusionOracle"]:
         features_parquet = cfg.paths.get("features_parquet")
         feature_columns = cfg.model.get("feature_columns")  # Optional: specific columns to use
 
@@ -1239,7 +1204,6 @@ def main(cfg: DictConfig):
                     "JanusGAP": "gap",
                     "JanusMaskedAttn": "masked_attn",
                     "JanusScalarFusion": "scalar_fusion",
-                    "JanusGatedFusion": "gated_fusion",
                 }
                 model_short = model_name_map.get(cfg.model.name, cfg.model.name.lower())
 

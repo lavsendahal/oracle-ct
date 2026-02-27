@@ -2,11 +2,10 @@
 """
 Janus: Neuro-Symbolic CT Disease Classification
 
-Four progressive model variants:
+Three progressive model variants:
 1. GAP Baseline: DINOv3 + Global Average Pooling
 2. Masked Attention: + Organ-specific attention (comparative for steatosis)
 3. Scalar Fusion: + Body-normalized volumes, HU comparisons, diameter ratios
-4. Gated Fusion: Scalar features gate visual features
 
 Key Features:
 - 30 disease classification from CT scans
@@ -21,7 +20,7 @@ Usage:
     from janus.datamodules import JanusDataset, FeatureBank
 
     model = build_model_from_config({
-        "model_type": "gated_fusion",
+        "model_type": "scalar_fusion",
         "num_diseases": 30,
     })
 """

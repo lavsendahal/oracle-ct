@@ -5,7 +5,6 @@ from .dinov3_oracle_ct import (
     JanusGAP,
     JanusMaskedAttn,
     JanusScalarFusion,
-    JanusGatedFusion,
     build_model_from_config,
 )
 

@@ -12,7 +12,7 @@ model:
   tri_stride: 1
   freeze_backbone: false
   use_gradient_checkpointing: true  # CRITICAL for training unfrozen backbone (saves ~50% memory)
-  allow_comparative: false  # Set false for fair comparison with GatedFusion (all diseases get 768d)
+  allow_comparative: false
 
 training:
   max_epochs: 20
