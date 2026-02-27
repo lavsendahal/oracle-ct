@@ -77,7 +77,7 @@ DEFAULT_ATTENTION_CONFIG = {
     "aortic_valve_calcification": {"organs": ["heart", "aorta"], "strategy": "union", "dilation": 3.0},
     "coronary_calcification": {"organs": ["heart"], "strategy": "single", "dilation": 3.0},
     "atherosclerosis": {"organs": ["aorta"], "strategy": "single", "dilation": 3.0},
-    "thrombosis": {"organs": ["veins", "aorta"], "strategy": "union", "dilation": 3.0},
+    "thrombosis": {"organs": [], "strategy": "global", "dilation": 0.0},
     "bowel_obstruction": {"organs": ["small_bowel", "colon"], "strategy": "union", "dilation": 3.0},
     "appendicitis": {"organs": ["colon"], "strategy": "roi", "roi_key": "appendix_roi", "dilation": 3.0},
     "hiatal_hernia": {"organs": ["stomach_esophagus", "lungs"], "strategy": "union", "dilation": 3.0},
@@ -91,10 +91,10 @@ DEFAULT_ATTENTION_CONFIG = {
     "renal_hypodensities": {"organs": ["kidneys"], "strategy": "single", "dilation": 3.0},
     "pleural_effusion": {"organs": ["lungs", "pleural_space"], "strategy": "union", "dilation": 3.0},
     "atelectasis": {"organs": ["lungs"], "strategy": "single", "dilation": 3.0},
-    "ascites": {"organs": ["liver", "spleen", "kidneys", "small_bowel"], "strategy": "union", "dilation": 3.0},
-    "anasarca": {"organs": ["subcutaneous_space", "pleural_space"], "strategy": "union", "dilation": 3.0},
-    "metastatic_disease": {"organs": ["liver", "lungs", "bones"], "strategy": "union", "dilation": 3.0},
-    "lymphadenopathy": {"organs": ["aorta", "veins"], "strategy": "union", "dilation": 3.0},
+    "ascites": {"organs": [], "strategy": "global", "dilation": 0.0},
+    "anasarca": {"organs": [], "strategy": "global", "dilation": 0.0},
+    "metastatic_disease": {"organs": [], "strategy": "global", "dilation": 0.0},
+    "lymphadenopathy": {"organs": [], "strategy": "global", "dilation": 0.0},
     "fracture": {"organs": ["bones"], "strategy": "single", "dilation": 0.0},
 }
 
