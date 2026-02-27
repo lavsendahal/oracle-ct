@@ -74,11 +74,16 @@ def build_minimal_parquet(input_path: str, output_path: str) -> None:
 
     print(f"  Minimal parquet: {df_min.shape[0]} cases × {df_min.shape[1]} columns")
 
-    # Save
+    # Save parquet
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     df_min.to_parquet(out, index=True)
-    print(f"  Saved → {out}")
+    print(f"  Saved parquet → {out}")
+
+    # Save CSV alongside parquet for inspection
+    csv_out = out.with_suffix(".csv")
+    df_min.to_csv(csv_out, index=True)
+    print(f"  Saved CSV    → {csv_out}")
 
     # Summary
     patterns = {

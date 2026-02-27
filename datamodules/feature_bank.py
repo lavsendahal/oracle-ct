@@ -51,8 +51,19 @@ class FeatureBank:
         """
         self.normalize_method = normalize
         self.stats: Dict[str, Dict[str, float]] = {}
-        
-        if stats_path and Path(stats_path).exists():
+
+        if normalize in ("zscore", "minmax"):
+            if not stats_path:
+                raise ValueError(
+                    f"FeatureBank: normalize='{normalize}' requires a stats_path, but none was provided.\n"
+                    f"Run scripts/compute_feature_stats.py on your training split and pass the output "
+                    f"via paths.feature_stats in config.yaml."
+                )
+            if not Path(stats_path).exists():
+                raise FileNotFoundError(
+                    f"FeatureBank: stats file not found: {stats_path}\n"
+                    f"Run scripts/compute_feature_stats.py on your training split to generate it."
+                )
             with open(stats_path, "r") as f:
                 self.stats = json.load(f)
     
