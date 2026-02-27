@@ -17,9 +17,9 @@
 Janus Models — Native 3D ResNet Backbone Variants
 
 Four model variants (mirrors janus_model.py for DINOv3):
-1. JanusResNet3DGAP:          Inflated ResNet50 + Global Average Pooling (baseline)
-2. JanusResNet3DMaskedAttn:   Inflated ResNet50 + 3D Organ-Masked Attention
-3. JanusResNet3DScalarFusion: Inflated ResNet50 + 3D Masked Attention + Scalar Fusion
+1. OracleCT_ResNet3D_GAP:          Inflated ResNet50 + Global Average Pooling (baseline)
+2. OracleCT_ResNet3D_MaskedUnaryAttn:   Inflated ResNet50 + 3D Organ-Masked Attention
+3. OracleCT_ResNet3D_MaskedUnaryAttnScalar: Inflated ResNet50 + 3D Masked Attention + Scalar Fusion
 Key difference from DINOv3 JANUS (janus_model.py):
 - No tri-slice conversion — processes full 3D CT volume [B,1,D,H,W] natively
 - I3D inflation: pretrained 2D ImageNet ResNet50 weights inflated to 3D
@@ -331,7 +331,7 @@ def masked_attention_pool_3d(
 # MODEL 1: GLOBAL AVERAGE POOLING (BASELINE)
 # =============================================================================
 
-class JanusResNet3DGAP(nn.Module):
+class OracleCT_ResNet3D_GAP(nn.Module):
     """
     Baseline: Inflated ResNet50 + Global Average Pooling
 
@@ -366,7 +366,7 @@ class JanusResNet3DGAP(nn.Module):
         self.register_buffer("_mean", torch.tensor(IMN_MEAN).view(1, 3, 1, 1, 1))
         self.register_buffer("_std",  torch.tensor(IMN_STD).view(1, 3, 1, 1, 1))
 
-        print(f"✓ JanusResNet3DGAP: {backbone} → f4({self.hidden_dim}d) GAP → head")
+        print(f"✓ OracleCT_ResNet3D_GAP: {backbone} → f4({self.hidden_dim}d) GAP → head")
 
     def _normalize(self, x: torch.Tensor) -> torch.Tensor:
         return (x - self._mean) / self._std
@@ -393,10 +393,109 @@ class JanusResNet3DGAP(nn.Module):
 
 
 # =============================================================================
-# MODEL 2: 3D MASKED ATTENTION
+# MODEL 2: 3D UNARY ATTENTION POOLING (learned global attention, no organ mask)
 # =============================================================================
 
-class JanusResNet3DMaskedAttn(nn.Module):
+class OracleCT_ResNet3D_UnaryAttnPool(nn.Module):
+    """
+    Inflated ResNet + Learned Full-Volume 3D Attention Pooling (no organ masking).
+
+    Intermediate between GAP (uniform) and MaskedUnaryAttn (organ-masked).
+    Each disease has its own learned score head attending over the full 3D volume.
+    """
+
+    def __init__(
+        self,
+        num_diseases:    int   = 30,
+        disease_names:   List[str] = None,
+        backbone:        str   = "resnet50",
+        pretrained:      bool  = True,
+        use_checkpoint:  bool  = True,
+        freeze_backbone: bool  = False,
+        learn_tau:       bool  = True,
+        init_tau:        float = 0.7,
+        fixed_tau:       float = 1.0,
+    ):
+        super().__init__()
+        self.num_diseases    = num_diseases
+        self.disease_names   = disease_names or get_all_diseases()[:num_diseases]
+        self.learn_tau       = learn_tau
+        self.fixed_tau       = fixed_tau
+        self.freeze_backbone = freeze_backbone
+
+        self.trunk, self._ch3, self._ch4 = _build_trunk(backbone, pretrained, use_checkpoint)
+        self.hidden_dim = self._ch3 + self._ch4
+
+        if freeze_backbone:
+            for p in self.trunk.parameters():
+                p.requires_grad = False
+            self.trunk.eval()
+
+        self.score_convs_f3 = nn.ModuleDict()
+        self.score_convs_f4 = nn.ModuleDict()
+        self.heads          = nn.ModuleDict()
+        if learn_tau:
+            self.temp_logit = nn.ParameterDict()
+
+        for disease in self.disease_names:
+            self.score_convs_f3[disease] = nn.Conv3d(self._ch3, 1, kernel_size=1, bias=True)
+            self.score_convs_f4[disease] = nn.Conv3d(self._ch4, 1, kernel_size=1, bias=True)
+            self.heads[disease]          = nn.Linear(self.hidden_dim, 1)
+            if learn_tau:
+                self.temp_logit[disease] = nn.Parameter(torch.tensor(inv_sigmoid_temp(init_tau)))
+
+        self.register_buffer("_mean", torch.tensor(IMN_MEAN).view(1, 3, 1, 1, 1))
+        self.register_buffer("_std",  torch.tensor(IMN_STD).view(1, 3, 1, 1, 1))
+
+        print(f"✓ OracleCT_ResNet3D_UnaryAttnPool: {backbone} → "
+              f"f3({self._ch3})+f4({self._ch4})={self.hidden_dim}d full-volume attention")
+
+    def _normalize(self, x: torch.Tensor) -> torch.Tensor:
+        return (x - self._mean) / self._std
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if self.freeze_backbone:
+            self.trunk.eval()
+        return self
+
+    def forward(self, batch: Dict[str, Any], **kwargs) -> torch.Tensor:
+        image  = batch["image"]
+        B      = image.size(0)
+        device = image.device
+
+        image_3ch = image.expand(-1, 3, -1, -1, -1).contiguous()
+        image_3ch = self._normalize(image_3ch)
+        f3, f4    = self.trunk(image_3ch)
+
+        # Full-volume attention: ones mask matching feature map spatial size
+        ones_f3 = torch.ones(B, 1, *f3.shape[2:], device=device)
+        ones_f4 = torch.ones(B, 1, *f4.shape[2:], device=device)
+
+        logits_list = []
+        for disease in self.disease_names:
+            tau = (0.2 + 1.8 * torch.sigmoid(self.temp_logit[disease])
+                   if self.learn_tau else self.fixed_tau)
+
+            p3 = masked_attention_pool_3d(f3, ones_f3, self.score_convs_f3[disease],
+                                          tau=tau, bias_in=None, bias_out=None)
+            p4 = masked_attention_pool_3d(f4, ones_f4, self.score_convs_f4[disease],
+                                          tau=tau, bias_in=None, bias_out=None)
+            visual_features = torch.cat([p3, p4], dim=1)
+
+            logit = self.heads[disease](visual_features)
+            if torch.isnan(logit).any():
+                logit = torch.where(torch.isnan(logit), torch.zeros_like(logit), logit)
+            logits_list.append(logit)
+
+        return torch.cat(logits_list, dim=1)
+
+
+# =============================================================================
+# MODEL 3: 3D MASKED ATTENTION
+# =============================================================================
+
+class OracleCT_ResNet3D_MaskedUnaryAttn(nn.Module):
     """
     Inflated ResNet50 + 3D Organ-Masked Attention
 
@@ -461,7 +560,7 @@ class JanusResNet3DMaskedAttn(nn.Module):
         self.register_buffer("_mean", torch.tensor(IMN_MEAN).view(1, 3, 1, 1, 1))
         self.register_buffer("_std",  torch.tensor(IMN_STD).view(1, 3, 1, 1, 1))
 
-        print(f"✓ JanusResNet3DMaskedAttn: {backbone} → "
+        print(f"✓ OracleCT_ResNet3D_MaskedUnaryAttn: {backbone} → "
               f"f3({self._ch3}) + f4({self._ch4}) = {self.hidden_dim}d masked attention")
 
     def _normalize(self, x: torch.Tensor) -> torch.Tensor:
@@ -512,16 +611,16 @@ class JanusResNet3DMaskedAttn(nn.Module):
 
 
 # =============================================================================
-# MODEL 3: 3D SCALAR FUSION
+# MODEL 4: 3D SCALAR FUSION
 # =============================================================================
 
-class JanusResNet3DScalarFusion(nn.Module):
+class OracleCT_ResNet3D_MaskedUnaryAttnScalar(nn.Module):
     """
     Inflated ResNet50 + 3D Masked Attention + Scalar Feature Fusion
 
     Fuses visual features (3072-dim pyramid) with scalar radiomics features
     via separate projectors → balanced concatenation → fusion MLP.
-    Same fusion strategy as JanusScalarFusion (DINOv3).
+    Same fusion strategy as OracleCT_DINOv3_MaskedUnaryAttnScalar (DINOv3).
     """
 
     def __init__(
@@ -618,7 +717,7 @@ class JanusResNet3DScalarFusion(nn.Module):
         self.register_buffer("_mean", torch.tensor(IMN_MEAN).view(1, 3, 1, 1, 1))
         self.register_buffer("_std",  torch.tensor(IMN_STD).view(1, 3, 1, 1, 1))
 
-        print(f"✓ JanusResNet3DScalarFusion: {backbone} → "
+        print(f"✓ OracleCT_ResNet3D_MaskedUnaryAttnScalar: {backbone} → "
               f"f3({self._ch3})+f4({self._ch4})={self.hidden_dim}d → "
               f"Visual({visual_proj_dim}d) + Scalar({scalar_proj_dim}d) → Fusion({fusion_hidden}d)")
 

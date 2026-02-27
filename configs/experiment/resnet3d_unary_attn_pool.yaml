@@ -1,0 +1,22 @@
+# @package _global_
+
+# UnaryAttnPool experiment: OracleCT_ResNet3D_UnaryAttnPool
+# Learned full-volume 3D attention pooling — no organ masking, no scalar features.
+# Intermediate ablation between GAP (uniform) and MaskedUnaryAttn (organ-guided).
+
+model:
+  name: OracleCT_ResNet3D_UnaryAttnPool
+  backbone: resnet152
+  pretrained: true
+  use_checkpoint: true
+  num_diseases: 30
+  disease_names: null
+  freeze_backbone: false
+  learn_tau: true
+  init_tau: 0.7
+
+training:
+  max_epochs: 20
+
+logging:
+  use_wandb: false

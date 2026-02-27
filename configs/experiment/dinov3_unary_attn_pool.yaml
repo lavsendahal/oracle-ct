@@ -1,0 +1,21 @@
+# @package _global_
+
+# UnaryAttnPool experiment: OracleCT_DINOv3_UnaryAttnPool
+# Learned full-volume attention pooling — no organ masking, no scalar features.
+# Intermediate ablation between GAP (uniform) and MaskedUnaryAttn (organ-guided).
+
+model:
+  name: OracleCT_DINOv3_UnaryAttnPool
+  num_diseases: 30
+  disease_names: null
+  variant: B  # S (small), B (base), or L (large)
+  image_size: 224
+  tri_stride: 1
+  freeze_backbone: false
+  use_gradient_checkpointing: true
+
+training:
+  max_epochs: 20
+
+logging:
+  use_wandb: false

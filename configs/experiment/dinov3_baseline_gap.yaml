@@ -1,10 +1,10 @@
 # @package _global_
 
-# Baseline experiment: JanusGAP (Global Average Pooling)
+# Baseline experiment: OracleCT_DINOv3_GAP (Global Average Pooling)
 # Pure neural baseline without anatomical guidance
 
 model:
-  name: JanusGAP
+  name: OracleCT_DINOv3_GAP
   num_diseases: 30
   variant: B  # S (small), B (base), or L (large)
   image_size: 224

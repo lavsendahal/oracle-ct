@@ -16,9 +16,9 @@
 Janus Training Script
 
 Usage:
-    python train.py experiment=baseline_gap paths.labels_csv=/path/to/labels.csv
-    python train.py experiment=masked_attn
-    python train.py experiment=scalar_fusion
+    python train.py experiment=dinov3_gap paths.labels_csv=/path/to/labels.csv
+    python train.py experiment=dinov3_masked_unary_attn
+    python train.py experiment=dinov3_masked_unary_attn_scalar
 """
 
 import os
@@ -53,10 +53,11 @@ except ImportError:
 
 from janus.losses import build_loss_from_config, BCEUncertainLoss
 from models.dinov3_oracle_ct import (
-    JanusGAP, JanusMaskedAttn, JanusScalarFusion)
+    OracleCT_DINOv3_GAP, OracleCT_DINOv3_UnaryAttnPool,
+    OracleCT_DINOv3_MaskedUnaryAttn, OracleCT_DINOv3_MaskedUnaryAttnScalar)
 from models.resnet3d_oracle_ct import (
-    JanusResNet3DGAP, JanusResNet3DMaskedAttn,
-    JanusResNet3DScalarFusion)
+    OracleCT_ResNet3D_GAP, OracleCT_ResNet3D_UnaryAttnPool,
+    OracleCT_ResNet3D_MaskedUnaryAttn, OracleCT_ResNet3D_MaskedUnaryAttnScalar)
 
 from janus.datamodules.dataset import JanusDataset, janus_collate_fn
 from janus.configs.disease_config import load_config_globally, get_all_diseases
@@ -174,8 +175,8 @@ def build_model(cfg: DictConfig) -> nn.Module:
     if feature_stats_path is None:
         feature_stats_path = cfg.paths.get("feature_stats", None)
 
-    if model_name == "JanusGAP":
-        model = JanusGAP(
+    if model_name == "OracleCT_DINOv3_GAP":
+        model = OracleCT_DINOv3_GAP(
             num_diseases=cfg.model.num_diseases,
             variant=cfg.model.variant,
             image_size=cfg.model.image_size,
@@ -183,8 +184,21 @@ def build_model(cfg: DictConfig) -> nn.Module:
             freeze_backbone=cfg.model.freeze_backbone,
             use_gradient_checkpointing=cfg.model.get("use_gradient_checkpointing", False),
         )
-    elif model_name == "JanusMaskedAttn":
-        model = JanusMaskedAttn(
+    elif model_name == "OracleCT_DINOv3_UnaryAttnPool":
+        model = OracleCT_DINOv3_UnaryAttnPool(
+            num_diseases=cfg.model.num_diseases,
+            disease_names=cfg.model.get("disease_names", None),
+            variant=cfg.model.variant,
+            image_size=cfg.model.image_size,
+            tri_stride=cfg.model.tri_stride,
+            freeze_backbone=cfg.model.freeze_backbone,
+            learn_tau=cfg.training.get("learn_tau", True),
+            init_tau=cfg.training.get("init_tau", 0.7),
+            fixed_tau=cfg.training.get("fixed_tau", 1.0),
+            use_gradient_checkpointing=cfg.model.get("use_gradient_checkpointing", False),
+        )
+    elif model_name == "OracleCT_DINOv3_MaskedUnaryAttn":
+        model = OracleCT_DINOv3_MaskedUnaryAttn(
             num_diseases=cfg.model.num_diseases,
             disease_names=cfg.model.get("disease_names", None),
             variant=cfg.model.variant,
@@ -200,8 +214,8 @@ def build_model(cfg: DictConfig) -> nn.Module:
             use_gradient_checkpointing=cfg.model.get("use_gradient_checkpointing", False),
             allow_comparative=cfg.model.get("allow_comparative", False),
         )
-    elif model_name == "JanusScalarFusion":
-        model = JanusScalarFusion(
+    elif model_name == "OracleCT_DINOv3_MaskedUnaryAttnScalar":
+        model = OracleCT_DINOv3_MaskedUnaryAttnScalar(
             num_diseases=cfg.model.num_diseases,
             disease_names=cfg.model.get("disease_names", None),
             variant=cfg.model.variant,
@@ -218,8 +232,8 @@ def build_model(cfg: DictConfig) -> nn.Module:
             feature_stats_path=feature_stats_path,
             use_gradient_checkpointing=cfg.model.get("use_gradient_checkpointing", False),
         )
-    elif model_name == "JanusScalarFusionVolume":
-        model = JanusScalarFusionVolume(
+    elif model_name == "OracleCT_DINOv3_MaskedUnaryAttnScalarVolume":
+        model = OracleCT_DINOv3_MaskedUnaryAttnScalarVolume(
             num_diseases=cfg.model.num_diseases,
             disease_names=cfg.model.get("disease_names", None),
             variant=cfg.model.variant,
@@ -237,8 +251,8 @@ def build_model(cfg: DictConfig) -> nn.Module:
             use_gradient_checkpointing=cfg.model.get("use_gradient_checkpointing", False),
             debug=cfg.model.get("debug", False),
         )
-    elif model_name == "JanusMaskedAttnOracle":
-        model = JanusMaskedAttnOracle(
+    elif model_name == "OracleCT_DINOv3_MaskedUnaryAttnOracle":
+        model = OracleCT_DINOv3_MaskedUnaryAttnOracle(
             num_diseases=cfg.model.num_diseases,
             num_organ_groups=cfg.model.get("num_organ_groups", 14),
             disease_names=cfg.model.get("disease_names", None),
@@ -250,8 +264,8 @@ def build_model(cfg: DictConfig) -> nn.Module:
             learn_tau=cfg.model.get("learn_tau", True),
             use_mask_bias=cfg.model.get("use_mask_bias", True),
         )
-    elif model_name == "JanusScalarFusionOracle":
-        model = JanusScalarFusionOracle(
+    elif model_name == "OracleCT_DINOv3_MaskedUnaryAttnScalarOracle":
+        model = OracleCT_DINOv3_MaskedUnaryAttnScalarOracle(
             num_diseases=cfg.model.num_diseases,
             num_organ_groups=cfg.model.get("num_organ_groups", 14),
             disease_names=cfg.model.get("disease_names", None),
@@ -263,42 +277,28 @@ def build_model(cfg: DictConfig) -> nn.Module:
             learn_tau=cfg.model.get("learn_tau", True),
             use_mask_bias=cfg.model.get("use_mask_bias", True),
         )
-    elif model_name == "JanusI3D_GAP":
-        model = JanusI3D_GAP(
-            num_diseases=cfg.model.num_diseases,
-            disease_names=cfg.model.get("disease_names", None),
-            resnet_name=cfg.model.get("resnet_name", "resnet50"),
-            pretrained=cfg.model.get("pretrained", True),
-            use_checkpoint=cfg.model.get("use_gradient_checkpointing", True),
-        )
-    elif model_name == "JanusI3D_MaskedAttn":
-        model = JanusI3D_MaskedAttn(
-            num_diseases=cfg.model.num_diseases,
-            disease_names=cfg.model.get("disease_names", None),
-            resnet_name=cfg.model.get("resnet_name", "resnet50"),
-            pretrained=cfg.model.get("pretrained", True),
-            use_checkpoint=cfg.model.get("use_gradient_checkpointing", True),
-            feature_stats_path=feature_stats_path,
-        )
-    elif model_name == "JanusI3D_ScalarFusion":
-        model = JanusI3D_ScalarFusion(
-            num_diseases=cfg.model.num_diseases,
-            disease_names=cfg.model.get("disease_names", None),
-            resnet_name=cfg.model.get("resnet_name", "resnet50"),
-            pretrained=cfg.model.get("pretrained", True),
-            use_checkpoint=cfg.model.get("use_gradient_checkpointing", True),
-            feature_stats_path=feature_stats_path,
-        )
-    elif model_name == "JanusResNet3DGAP":
-        model = JanusResNet3DGAP(
+    elif model_name == "OracleCT_ResNet3D_GAP":
+        model = OracleCT_ResNet3D_GAP(
             num_diseases=cfg.model.num_diseases,
             backbone=cfg.model.get("backbone", "resnet50"),
             pretrained=cfg.model.get("pretrained", True),
             use_checkpoint=cfg.model.get("use_checkpoint", True),
             freeze_backbone=cfg.model.get("freeze_backbone", False),
         )
-    elif model_name == "JanusResNet3DMaskedAttn":
-        model = JanusResNet3DMaskedAttn(
+    elif model_name == "OracleCT_ResNet3D_UnaryAttnPool":
+        model = OracleCT_ResNet3D_UnaryAttnPool(
+            num_diseases=cfg.model.num_diseases,
+            disease_names=cfg.model.get("disease_names", None),
+            backbone=cfg.model.get("backbone", "resnet50"),
+            pretrained=cfg.model.get("pretrained", True),
+            use_checkpoint=cfg.model.get("use_checkpoint", True),
+            freeze_backbone=cfg.model.get("freeze_backbone", False),
+            learn_tau=cfg.model.get("learn_tau", True),
+            init_tau=cfg.model.get("init_tau", 0.7),
+            fixed_tau=cfg.model.get("fixed_tau", 1.0),
+        )
+    elif model_name == "OracleCT_ResNet3D_MaskedUnaryAttn":
+        model = OracleCT_ResNet3D_MaskedUnaryAttn(
             num_diseases=cfg.model.num_diseases,
             disease_names=cfg.model.get("disease_names", None),
             backbone=cfg.model.get("backbone", "resnet50"),
@@ -312,8 +312,8 @@ def build_model(cfg: DictConfig) -> nn.Module:
             init_inside=cfg.model.get("init_inside", 0.8),
             init_outside=cfg.model.get("init_outside", 0.2),
         )
-    elif model_name == "JanusResNet3DScalarFusion":
-        model = JanusResNet3DScalarFusion(
+    elif model_name == "OracleCT_ResNet3D_MaskedUnaryAttnScalar":
+        model = OracleCT_ResNet3D_MaskedUnaryAttnScalar(
             num_diseases=cfg.model.num_diseases,
             disease_names=cfg.model.get("disease_names", None),
             backbone=cfg.model.get("backbone", "resnet50"),
@@ -772,10 +772,13 @@ def main(cfg: DictConfig):
     if is_main_process():
         print("\nBuilding datasets...")
 
-    # Only load features for ScalarFusion models
+    # Only load features for MaskedUnaryAttnScalar models
     features_parquet = None
     feature_columns = None
-    if cfg.model.name in ["JanusScalarFusion", "JanusScalarFusionVolume", "JanusI3D_ScalarFusion", "JanusScalarFusionOracle"]:
+    if cfg.model.name in [
+        "OracleCT_DINOv3_MaskedUnaryAttnScalar",
+        "OracleCT_ResNet3D_MaskedUnaryAttnScalar",
+    ]:
         features_parquet = cfg.paths.get("features_parquet")
         feature_columns = cfg.model.get("feature_columns")  # Optional: specific columns to use
 
@@ -991,8 +994,8 @@ def main(cfg: DictConfig):
 
         # Name-based parameter grouping (more robust than attribute-based)
         # This ensures ALL parameters are captured, including:
-        # - fusion_heads, visual_projectors, scalar_projectors (JanusScalarFusion)
-        # - score_mlps (JanusMaskedAttn, JanusScalarFusion)
+        # - fusion_heads, visual_projectors, scalar_projectors (OracleCT_DINOv3_MaskedUnaryAttnScalar)
+        # - score_mlps (OracleCT_DINOv3_MaskedUnaryAttn, OracleCT_DINOv3_MaskedUnaryAttnScalar)
         # - heads (all models)
         backbone_params = []
         alpha_params = []
@@ -1201,9 +1204,14 @@ def main(cfg: DictConfig):
 
                 # Model name mapping for shorter filenames
                 model_name_map = {
-                    "JanusGAP": "gap",
-                    "JanusMaskedAttn": "masked_attn",
-                    "JanusScalarFusion": "scalar_fusion",
+                    "OracleCT_DINOv3_GAP": "gap",
+                    "OracleCT_DINOv3_UnaryAttnPool": "unary_attn_pool",
+                    "OracleCT_DINOv3_MaskedUnaryAttn": "masked_unary_attn",
+                    "OracleCT_DINOv3_MaskedUnaryAttnScalar": "masked_unary_attn_scalar",
+                    "OracleCT_ResNet3D_GAP": "resnet_gap",
+                    "OracleCT_ResNet3D_UnaryAttnPool": "resnet_unary_attn_pool",
+                    "OracleCT_ResNet3D_MaskedUnaryAttn": "resnet_masked_unary_attn",
+                    "OracleCT_ResNet3D_MaskedUnaryAttnScalar": "resnet_masked_unary_attn_scalar",
                 }
                 model_short = model_name_map.get(cfg.model.name, cfg.model.name.lower())
 

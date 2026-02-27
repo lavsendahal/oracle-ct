@@ -1,10 +1,10 @@
 # @package _global_
 
-# Scalar Fusion experiment: JanusScalarFusion
+# Scalar Fusion experiment: OracleCT_DINOv3_MaskedUnaryAttnScalar
 # Full neuro-symbolic with visual + scalar features + learnable priors
 
 model:
-  name: JanusScalarFusion
+  name: OracleCT_DINOv3_MaskedUnaryAttnScalar
   num_diseases: 30
   disease_names: null
   variant: B  # S (small), B (base), or L (large)

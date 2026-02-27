@@ -43,7 +43,7 @@ class JanusDataset(Dataset):
         pack_root: Directory containing .pt pack files
         labels_csv: Path to labels CSV (columns: study id, disease1, disease2, ...)
         case_ids: List of case IDs to use (required for train/val/test splits)
-        features_parquet: Optional path to features parquet file (only for ScalarFusion model)
+        features_parquet: Optional path to features parquet file (only for MaskedUnaryAttnScalar model)
         feature_columns: Optional list of specific feature columns to use (filters parquet)
         disease_names: List of disease column names to use as labels
         transform: Optional transform for images
@@ -74,7 +74,7 @@ class JanusDataset(Dataset):
         self.aug_preset = aug_preset
         self.aug_params = aug_params or {}
 
-        # Load features (optional - only for ScalarFusion model)
+        # Load features (optional - only for MaskedUnaryAttnScalar model)
         self.use_features = features_parquet is not None
         if self.use_features:
             self.features_df = pd.read_parquet(features_parquet)
@@ -106,7 +106,7 @@ class JanusDataset(Dataset):
         else:
             self.features_df = None
             self.num_features = 0
-            print("No features loaded (GAP/MaskedAttn model)")
+            print("No features loaded (GAP/UnaryAttnPool/MaskedUnaryAttn model)")
 
         # Load labels
         self.labels_df = pd.read_csv(labels_csv)

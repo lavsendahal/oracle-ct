@@ -20,7 +20,7 @@ Runs inference on a split (default: test) and saves per-case probabilities to CS
 Example:
   python janus/inference.py \
     experiment=dinov3_scalar_fusion \
-    paths.checkpoint=outputs/JanusScalarFusion/.../checkpoints/best.pt \
+    paths.checkpoint=outputs/OracleCT_DINOv3_MaskedUnaryAttnScalar/.../checkpoints/best.pt \
     logging.use_wandb=false \
     training.use_ddp=true
 """
@@ -148,10 +148,8 @@ def main(cfg: DictConfig):
     features_parquet = None
     feature_columns = None
     if cfg.model.name in [
-        "JanusScalarFusion",
-        "JanusScalarFusionVolume",
-        "JanusI3D_ScalarFusion",
-        "JanusScalarFusionOracle",
+        "OracleCT_DINOv3_MaskedUnaryAttnScalar",
+        "OracleCT_ResNet3D_MaskedUnaryAttnScalar",
     ]:
         features_parquet = cfg.paths.get("features_parquet")
         feature_columns = cfg.model.get("feature_columns")

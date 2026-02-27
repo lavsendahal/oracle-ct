@@ -1,11 +1,12 @@
 # janus/__init__.py
 """
-Janus: Neuro-Symbolic CT Disease Classification
+OracleCT: Neuro-Symbolic CT Disease Classification
 
-Three progressive model variants:
-1. GAP Baseline: DINOv3 + Global Average Pooling
-2. Masked Attention: + Organ-specific attention (comparative for steatosis)
-3. Scalar Fusion: + Body-normalized volumes, HU comparisons, diameter ratios
+Four progressive model variants (DINOv3 and ResNet3D backbones):
+1. GAP Baseline:           + Global Average Pooling (uniform)
+2. UnaryAttnPool:          + Learned full-volume attention (no organ mask)
+3. MaskedUnaryAttn:        + Organ-guided attention (organ mask prior)
+4. MaskedUnaryAttnScalar:  + Scalar features (HU, volume, diameters)
 
 Key Features:
 - 30 disease classification from CT scans
@@ -20,7 +21,7 @@ Usage:
     from janus.datamodules import JanusDataset, FeatureBank
 
     model = build_model_from_config({
-        "model_type": "scalar_fusion",
+        "model_type": "masked_unary_attn_scalar",
         "num_diseases": 30,
     })
 """

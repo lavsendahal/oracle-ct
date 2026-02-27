@@ -17,9 +17,9 @@
 Janus Models for Neuro-Symbolic CT Disease Classification
 
 Four model variants:
-1. JanusGAP: DINOv3 + Global Average Pooling (baseline)
-2. JanusMaskedAttn: DINOv3 + Organ-Masked Attention
-3. JanusScalarFusion: DINOv3 + Masked Attention + Scalar Feature Fusion
+1. OracleCT_DINOv3_GAP: DINOv3 + Global Average Pooling (baseline)
+2. OracleCT_DINOv3_MaskedUnaryAttn: DINOv3 + Organ-Masked Attention
+3. OracleCT_DINOv3_MaskedUnaryAttnScalar: DINOv3 + Masked Attention + Scalar Feature Fusion
 
 Key improvements over previous implementation:
 - Precise appendix ROI (from disease_rois) instead of colon mask
@@ -367,7 +367,7 @@ def get_attention_mask_for_disease(
     meta: List[Dict],
     device: torch.device,
     *,
-    allow_comparative: bool = True,      # MaskedAttn=True, ScalarFusion/Gated=False
+    allow_comparative: bool = True,      # MaskedUnaryAttn=True, MaskedUnaryAttnScalar=False
 ) -> Union[torch.Tensor, List[torch.Tensor]]:
     """
     Unified mask builder for all models.
@@ -448,7 +448,7 @@ def get_attention_mask_for_disease(
 # MODEL 1: GLOBAL AVERAGE POOLING (BASELINE)
 # =============================================================================
 
-class JanusGAP(nn.Module):
+class OracleCT_DINOv3_GAP(nn.Module):
     """
     Baseline: DINOv3 + Global Average Pooling
 
@@ -559,10 +559,137 @@ class JanusGAP(nn.Module):
 
 
 # =============================================================================
-# MODEL 2: MASKED ATTENTION
+# MODEL 2: UNARY ATTENTION POOLING (learned global attention, no organ mask)
 # =============================================================================
 
-class JanusMaskedAttn(nn.Module):
+class OracleCT_DINOv3_UnaryAttnPool(nn.Module):
+    """
+    DINOv3 + Learned Full-Volume Attention Pooling (no organ masking).
+
+    Intermediate between GAP (uniform pooling) and MaskedUnaryAttn (organ-masked).
+    Each disease has its own learned score head that freely attends over the
+    full volume — no anatomical prior constrains where it looks.
+
+    Appropriate for diseases with no stable organ anchor (free_air, ascites,
+    metastatic_disease, lymphadenopathy, etc.) as a standalone ablation point.
+    """
+
+    def __init__(
+        self,
+        num_diseases: int = 30,
+        disease_names: List[str] = None,
+        variant: str = "S",
+        image_size: int = 224,
+        tri_stride: int = 1,
+        freeze_backbone: bool = True,
+        learn_tau: bool = True,
+        init_tau: float = 0.7,
+        fixed_tau: float = 1.0,
+        use_gradient_checkpointing: bool = False,
+    ):
+        super().__init__()
+
+        self.num_diseases = num_diseases
+        all_diseases = get_all_diseases()
+        self.disease_names = disease_names or all_diseases[:num_diseases]
+        self.image_size = image_size
+        self.tri_stride = tri_stride
+        self.learn_tau = learn_tau
+        self.fixed_tau = fixed_tau
+        self.variant = variant.upper()
+
+        if self.variant not in DINOV3_HF_IDS:
+            raise ValueError(f"Invalid variant '{variant}'. Must be one of: {list(DINOV3_HF_IDS.keys())}")
+
+        self.backbone = AutoModel.from_pretrained(DINOV3_HF_IDS[self.variant], trust_remote_code=True)
+        self.hidden_dim = self.backbone.config.hidden_size
+        self.freeze_backbone = freeze_backbone
+
+        if freeze_backbone:
+            for p in self.backbone.parameters():
+                p.requires_grad = False
+            self.backbone.eval()
+        else:
+            for p in self.backbone.parameters():
+                p.requires_grad = True
+            self.backbone.train()
+            if use_gradient_checkpointing and hasattr(self.backbone, 'gradient_checkpointing_enable'):
+                self.backbone.gradient_checkpointing_enable()
+
+        self.score_mlps = nn.ModuleDict()
+        self.heads = nn.ModuleDict()
+        if self.learn_tau:
+            self.temp_logit = nn.ParameterDict()
+
+        for disease in self.disease_names:
+            self.score_mlps[disease] = nn.Linear(self.hidden_dim, 1)
+            self.heads[disease] = nn.Linear(self.hidden_dim, 1)
+            if self.learn_tau:
+                self.temp_logit[disease] = nn.Parameter(torch.tensor(inv_sigmoid_temp(init_tau)))
+
+        self.register_buffer("_mean", torch.tensor(IMN_MEAN).view(1, 1, 3, 1, 1))
+        self.register_buffer("_std", torch.tensor(IMN_STD).view(1, 1, 3, 1, 1))
+
+    def _normalize(self, x: torch.Tensor) -> torch.Tensor:
+        return (x - self._mean) / self._std
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if self.freeze_backbone:
+            self.backbone.eval()
+        return self
+
+    def forward(self, batch: Dict[str, Any]) -> torch.Tensor:
+        image = batch["image"]
+        B, _, D, H, W = image.shape
+        device = image.device
+
+        tri = make_trislices(image, self.tri_stride)
+        T = tri.size(1)
+
+        tri = F.interpolate(
+            tri.view(B * T, 3, H, W),
+            size=(self.image_size, self.image_size),
+            mode="bilinear", align_corners=False
+        ).view(B, T, 3, self.image_size, self.image_size)
+        tri = self._normalize(tri)
+
+        tri_flat = tri.view(B * T, 3, self.image_size, self.image_size)
+        out = self.backbone(pixel_values=tri_flat)
+        tokens = out.last_hidden_state[:, 1:, :]
+
+        num_register_tokens = getattr(self.backbone.config, "num_register_tokens", 0)
+        if num_register_tokens > 0 and tokens.size(1) > num_register_tokens:
+            tokens = tokens[:, :-num_register_tokens, :]
+
+        N, D_tok = tokens.size(1), tokens.size(2)
+        tokens = tokens.view(B, T, N, D_tok)
+
+        # Full-volume attention: ones mask (all tokens treated as inside region)
+        ones_mask = torch.ones(B, T, self.image_size, self.image_size, device=device)
+
+        logits_list = []
+        for disease in self.disease_names:
+            tau = (0.2 + 1.8 * torch.sigmoid(self.temp_logit[disease])
+                   if self.learn_tau else self.fixed_tau)
+
+            pooled = masked_attention_pool(
+                tokens, ones_mask, self.score_mlps[disease],
+                tau=tau, bias_in=None, bias_out=None
+            )
+            logit = self.heads[disease](pooled)
+            if torch.isnan(logit).any():
+                logit = torch.where(torch.isnan(logit), torch.zeros_like(logit), logit)
+            logits_list.append(logit)
+
+        return torch.cat(logits_list, dim=1)
+
+
+# =============================================================================
+# MODEL 3: MASKED ATTENTION
+# =============================================================================
+
+class OracleCT_DINOv3_MaskedUnaryAttn(nn.Module):
     """
     DINOv3 + Organ-Masked Attention
 
@@ -794,10 +921,10 @@ class JanusMaskedAttn(nn.Module):
 
 
 # =============================================================================
-# MODEL 3: MASKED ATTENTION + SCALAR FUSION
+# MODEL 4: MASKED ATTENTION + SCALAR FUSION
 # =============================================================================
 
-class JanusScalarFusion(nn.Module):
+class OracleCT_DINOv3_MaskedUnaryAttnScalar(nn.Module):
     """
     DINOv3 + Masked Attention + Scalar Feature Fusion
 
@@ -1022,8 +1149,8 @@ class JanusScalarFusion(nn.Module):
         logits_list = []
 
         for disease in self.disease_names:
-            # ScalarFusion pools a single visual stream per disease; comparative masks (list of masks)
-            # are only supported by JanusMaskedAttn. For comparative-config diseases, fall back
+            # MaskedUnaryAttnScalar pools a single visual stream per disease; comparative masks (list of masks)
+            # are only supported by OracleCT_DINOv3_MaskedUnaryAttn. For comparative-config diseases, fall back
             # to a union mask here.
             attn_mask = get_attention_mask_for_disease(
                 disease, masks, disease_rois, meta, device, allow_comparative=False
@@ -1120,17 +1247,17 @@ def build_model_from_config(config: Dict[str, Any]) -> nn.Module:
     }
     
     if model_type == "gap":
-        return JanusGAP(**common_args)
+        return OracleCT_DINOv3_GAP(**common_args)
     
     elif model_type == "masked_attn":
-        return JanusMaskedAttn(
+        return OracleCT_DINOv3_MaskedUnaryAttn(
             **common_args,
             disease_names=config.get("disease_names"),
             tau=config.get("tau", 1.0),
         )
     
     elif model_type == "scalar_fusion":
-        return JanusScalarFusion(
+        return OracleCT_DINOv3_MaskedUnaryAttnScalar(
             **common_args,
             disease_names=config.get("disease_names"),
             tau=config.get("tau", 1.0),
@@ -1148,16 +1275,16 @@ if __name__ == "__main__":
     print("""
 Three model variants:
 
-1. JanusGAP (baseline)
+1. OracleCT_DINOv3_GAP (baseline)
    - DINOv3 + Global Average Pooling
    - No anatomical guidance
    
-2. JanusMaskedAttn
+2. OracleCT_DINOv3_MaskedUnaryAttn
    - Organ-masked attention per disease
    - ROI attention for appendicitis (precise box)
    - Comparative attention for steatosis (liver vs spleen)
    
-3. JanusScalarFusion
+3. OracleCT_DINOv3_MaskedUnaryAttnScalar
    - Masked attention + scalar feature fusion
    - Body-size normalized volumes
    - Liver-spleen HU difference

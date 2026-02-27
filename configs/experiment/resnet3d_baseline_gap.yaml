@@ -1,13 +1,13 @@
 # @package _global_
 
-# 3D ResNet Baseline experiment: JanusResNet3DGAP
+# 3D ResNet Baseline experiment: OracleCT_ResNet3D_GAP
 #
 # Pure neural baseline — Global Average Pooling over f4 (2048-dim).
 # No anatomical guidance, no scalar features, no per-disease modules.
 # Inflated ResNet50 (I3D) pretrained on ImageNet processes [B,1,D,H,W] directly.
 
 model:
-  name: JanusResNet3DGAP
+  name: OracleCT_ResNet3D_GAP
   backbone: resnet152        # resnet50 | resnet101 | resnet152
   pretrained: true          # Initialize with ImageNet weights (inflated to 3D)
   use_checkpoint: true      # Gradient checkpointing in trunk (saves memory)

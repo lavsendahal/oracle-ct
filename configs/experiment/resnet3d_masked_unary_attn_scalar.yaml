@@ -1,6 +1,6 @@
 # @package _global_
 
-# 3D ResNet Scalar Fusion experiment: JanusResNet3DScalarFusion
+# 3D ResNet Scalar Fusion experiment: OracleCT_ResNet3D_MaskedUnaryAttnScalar
 #
 # Full neuro-symbolic: visual features + scalar features + fusion MLP.
 # Inflated ResNet50 (I3D) pretrained on ImageNet processes [B,1,D,H,W] directly.
@@ -10,7 +10,7 @@
 # both concatenated and passed through fusion MLP → logit.
 
 model:
-  name: JanusResNet3DScalarFusion
+  name: OracleCT_ResNet3D_MaskedUnaryAttnScalar
   backbone: resnet152        # resnet50 | resnet101 | resnet152
   pretrained: true          # Initialize with ImageNet weights (inflated to 3D)
   use_checkpoint: true      # Gradient checkpointing in trunk (saves memory)
