@@ -12,9 +12,7 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 
-# janus/models/janus_model.py
 """
-Janus Models for Neuro-Symbolic CT Disease Classification
 
 Four model variants:
 1. OracleCT_DINOv3_GAP: DINOv3 + Global Average Pooling (baseline)
@@ -928,24 +926,21 @@ class OracleCT_DINOv3_MaskedUnaryAttnScalar(nn.Module):
     """
     DINOv3 + Masked Attention + Scalar Feature Fusion
 
-    Fuses visual features with scalar radiomics features:
-    - Volume ratios (body-size normalized)
-    - HU comparisons (liver vs spleen)
-    - Diameter measurements
-    - Derived features (SBO ratio, etc.)
+    Architecture matches TriageNet CTDinoV3_ORACLECompat (masked_attn_scalar):
+      visual [B, D]  +  scalars [B, S]
+        → cat [B, D+S]
+        → LayerNorm(D+S) → Linear(D+S → scalar_hidden) → ReLU → Linear(scalar_hidden → 1)
 
-    Architecture: Separate Visual and Scalar Projectors
-    - Visual features (768-3072 dim) → Visual Projector → visual_proj_dim
-    - Scalar features (10-20 dim) → Scalar Projector → scalar_proj_dim
-    - Concatenate balanced projections → Fusion MLP → Logit
-    - This ensures equal gradient flow and representational power for both modalities
+    Scalars come from a minimal parquet: mean_hu + to_body_ratio + touches_border
+    per disease's primary organ(s). Variable S per disease; 0 for global-strategy
+    diseases (no organ anchor) → head uses visual only.
     """
 
     def __init__(
         self,
         num_diseases: int = 30,
         disease_names: List[str] = None,
-        variant: str = "S",  # "S", "B", or "L"
+        variant: str = "S",
         image_size: int = 224,
         tri_stride: int = 1,
         freeze_backbone: bool = True,
@@ -955,12 +950,9 @@ class OracleCT_DINOv3_MaskedUnaryAttnScalar(nn.Module):
         use_mask_bias: bool = True,
         init_inside: float = 0.8,
         init_outside: float = 0.2,
-        fusion_hidden: int = 256,
-        visual_proj_dim: int = 256,  # Dimension for visual projection
-        scalar_proj_dim: int = 256,  # Dimension for scalar projection
+        scalar_hidden: int = 256,
         feature_stats_path: Optional[str] = None,
         use_gradient_checkpointing: bool = False,
-        use_modality_gating: bool = False,  # Deprecated - use separate projectors instead
     ):
         super().__init__()
 
@@ -973,28 +965,16 @@ class OracleCT_DINOv3_MaskedUnaryAttnScalar(nn.Module):
         self.fixed_tau = fixed_tau
         self.use_mask_bias = use_mask_bias
         self.variant = variant.upper()
-        self.use_modality_gating = use_modality_gating
 
-        # Feature bank for scalar features
-        self.feature_bank = FeatureBank(
-            stats_path=feature_stats_path,
-            normalize="zscore",
-        )
+        self.feature_bank = FeatureBank(stats_path=feature_stats_path, normalize="zscore")
 
-        # Get DINOv3 model ID from variant
         if self.variant not in DINOV3_HF_IDS:
             raise ValueError(f"Invalid variant '{variant}'. Must be one of: {list(DINOV3_HF_IDS.keys())}")
 
-        backbone_id = DINOV3_HF_IDS[self.variant]
-
-        # Load backbone
-        self.backbone = AutoModel.from_pretrained(backbone_id, trust_remote_code=True)
+        self.backbone = AutoModel.from_pretrained(DINOV3_HF_IDS[self.variant], trust_remote_code=True)
         self.hidden_dim = self.backbone.config.hidden_size
-
-        # Store freeze setting
         self.freeze_backbone = freeze_backbone
 
-        # Freeze backbone if requested
         if freeze_backbone:
             for p in self.backbone.parameters():
                 p.requires_grad = False
@@ -1003,216 +983,134 @@ class OracleCT_DINOv3_MaskedUnaryAttnScalar(nn.Module):
             for p in self.backbone.parameters():
                 p.requires_grad = True
             self.backbone.train()
+            if use_gradient_checkpointing and hasattr(self.backbone, 'gradient_checkpointing_enable'):
+                self.backbone.gradient_checkpointing_enable()
+                print(f"✓ Gradient checkpointing enabled for {self.variant} backbone")
 
-            # Enable gradient checkpointing to save memory (only when training backbone)
-            if use_gradient_checkpointing:
-                if hasattr(self.backbone, 'gradient_checkpointing_enable'):
-                    self.backbone.gradient_checkpointing_enable()
-                    print(f"✓ Gradient checkpointing enabled for {self.variant} backbone")
+        # Per-disease modules
+        self.score_mlps  = nn.ModuleDict()
+        self.heads       = nn.ModuleDict()
 
-        # Per-disease components: Attention MLPs + Separate Projectors + Fusion
-        self.score_mlps = nn.ModuleDict()
-        self.visual_projectors = nn.ModuleDict()
-        self.scalar_projectors = nn.ModuleDict()
-        self.fusion_heads = nn.ModuleDict()
+        if use_mask_bias:
+            self.inside_logit  = nn.ParameterDict()
+            self.outside_logit = nn.ParameterDict()
+        if learn_tau:
+            self.temp_logit = nn.ParameterDict()
 
-        # Learnable priors (bias and temperature) - CRITICAL for masking performance!
-        if self.use_mask_bias:
-            self.inside_logit = nn.ParameterDict()   # Bias for inside mask regions
-            self.outside_logit = nn.ParameterDict()  # Bias for outside mask regions
-
-        if self.learn_tau:
-            self.temp_logit = nn.ParameterDict()  # Learnable temperature per disease
+        disease_configs = get_all_disease_configs()
 
         for disease in self.disease_names:
-            # Attention score MLP (unchanged)
             self.score_mlps[disease] = nn.Linear(self.hidden_dim, 1)
 
-            # Learnable priors for masked attention
-            if self.use_mask_bias:
-                # Initialize inside/outside logits from config probabilities
-                self.inside_logit[disease] = nn.Parameter(torch.tensor(to_logit(init_inside)))
+            if use_mask_bias:
+                self.inside_logit[disease]  = nn.Parameter(torch.tensor(to_logit(init_inside)))
                 self.outside_logit[disease] = nn.Parameter(torch.tensor(to_logit(init_outside)))
-
-            if self.learn_tau:
-                # BUGFIX: Use inverse sigmoid to correctly initialize temperature
-                # Old: to_logit(0.7) produces tau≈1.46 (WRONG!)
-                # New: inv_sigmoid_temp(0.7) produces tau=0.7 (CORRECT!)
+            if learn_tau:
                 self.temp_logit[disease] = nn.Parameter(torch.tensor(inv_sigmoid_temp(init_tau)))
 
-            disease_configs = get_all_disease_configs()
             config = disease_configs.get(disease)
+            num_scalars = (len(config.scalar_features) + len(config.derived_features)) if config else 0
 
-            # Count scalar features: Use EXACT same features as LR baseline (no presence indicators)
-            num_base_features = len(config.scalar_features) + len(config.derived_features) if config else 0
-            num_scalars = num_base_features  # IDENTICAL to LR: no presence indicators
-
-            # Visual feature dimension (always hidden_dim now - no more comparative)
-            visual_dim = self.hidden_dim
-
-            # Visual Projector: visual_dim -> visual_proj_dim
-            self.visual_projectors[disease] = nn.Sequential(
-                nn.Linear(visual_dim, visual_proj_dim),
+            # Direct concat: visual [D] + scalars [S] → MLP → 1
+            fusion_dim = self.hidden_dim + num_scalars
+            self.heads[disease] = nn.Sequential(
+                nn.LayerNorm(fusion_dim),
+                nn.Linear(fusion_dim, scalar_hidden),
                 nn.ReLU(inplace=True),
+                nn.Linear(scalar_hidden, 1),
             )
 
-            # BUGFIX: Only register scalar_projector if scalars exist (ModuleDict cannot store None)
-            # Old: self.scalar_projectors[disease] = None (CRASHES!)
-            # New: Only register when num_scalars > 0 (CORRECT!)
-            if num_scalars > 0:
-                # Two-layer projector for better expressiveness
-                scalar_hidden = max(64, num_scalars * 4)  # Adaptive hidden size
-                self.scalar_projectors[disease] = nn.Sequential(
-                    nn.Linear(num_scalars, scalar_hidden),
-                    nn.ReLU(inplace=True),
-                    nn.Linear(scalar_hidden, scalar_proj_dim),
-                    nn.ReLU(inplace=True),
-                )
-            # else: Do nothing - don't register at all (check with "disease in self.scalar_projectors")
-
-            # Fusion Head: (visual_proj_dim + scalar_proj_dim) -> 1
-            # Balanced input: 256 + 256 = 512 (equal representation!)
-            fusion_input_dim = visual_proj_dim + (scalar_proj_dim if num_scalars > 0 else 0)
-
-            self.fusion_heads[disease] = nn.Sequential(
-                nn.LayerNorm(fusion_input_dim),
-                nn.Linear(fusion_input_dim, fusion_hidden),
-                nn.ReLU(inplace=True),
-                nn.Dropout(0.1),
-                nn.Linear(fusion_hidden, 1),
-            )
-
-        print(f"✓ Separate projectors: Visual ({visual_proj_dim}d) + Scalar ({scalar_proj_dim}d) → Fusion ({fusion_hidden}d → 1)")
-
-        # Deprecated: Old modality gating (kept for backward compatibility)
-        if self.use_modality_gating:
-            self.visual_gate_logit = nn.Parameter(torch.zeros(num_diseases))
-            self.scalar_gate_logit = nn.Parameter(torch.zeros(num_diseases))
-            print(f"⚠ WARNING: use_modality_gating=True is deprecated. Separate projectors are now used instead.")
-
-        # Normalization buffers
         self.register_buffer("_mean", torch.tensor(IMN_MEAN).view(1, 1, 3, 1, 1))
-        self.register_buffer("_std", torch.tensor(IMN_STD).view(1, 1, 3, 1, 1))
+        self.register_buffer("_std",  torch.tensor(IMN_STD).view(1, 1, 3, 1, 1))
+        print(f"✓ OracleCT_DINOv3_MaskedUnaryAttnScalar: {self.variant} → {self.hidden_dim}d + scalars → {scalar_hidden}d → 1")
 
     def _normalize(self, x: torch.Tensor) -> torch.Tensor:
         return (x - self._mean) / self._std
 
     def train(self, mode: bool = True):
-        """Override train to keep backbone frozen if requested."""
         super().train(mode)
         if self.freeze_backbone:
             self.backbone.eval()
         return self
 
-    
     def forward(self, batch: Dict[str, Any], **kwargs) -> torch.Tensor:
-        image = batch["image"]
-        masks = batch["masks"]
-        features_rows = batch.get("features_row", [None] * image.size(0))  # List[pd.Series] from parquet
+        image        = batch["image"]
+        masks        = batch["masks"]
+        features_rows = batch.get("features_row", [None] * image.size(0))
         disease_rois = batch.get("disease_rois", [{}] * image.size(0))
-        meta = batch.get("meta", [{}] * image.size(0))
-        
+        meta         = batch.get("meta", [{}] * image.size(0))
+
         B, _, D, H, W = image.shape
         device = image.device
-        
-        # Convert to TRI-slices
+
+        # TRI-slices
         tri = make_trislices(image, self.tri_stride)
-        T = tri.size(1)
-        
+        T   = tri.size(1)
         tri = F.interpolate(
             tri.view(B * T, 3, H, W),
-            size=(self.image_size, self.image_size),
-            mode="bilinear", align_corners=False
+            size=(self.image_size, self.image_size), mode="bilinear", align_corners=False
         ).view(B, T, 3, self.image_size, self.image_size)
         tri = self._normalize(tri)
 
-        # Forward through backbone
+        # Backbone tokens
         tri_flat = tri.view(B * T, 3, self.image_size, self.image_size)
-        out = self.backbone(pixel_values=tri_flat)
-        tokens = out.last_hidden_state[:, 1:, :]  # Remove CLS token
-
-        # Remove register tokens (DINOv3 has 4 register tokens at the end)
-        num_register_tokens = getattr(self.backbone.config, "num_register_tokens", 0)
-        if num_register_tokens > 0 and tokens.size(1) > num_register_tokens:
-            tokens = tokens[:, :-num_register_tokens, :]  # [B*T, N, D]
-
+        out    = self.backbone(pixel_values=tri_flat)
+        tokens = out.last_hidden_state[:, 1:, :]  # drop CLS
+        R = getattr(self.backbone.config, "num_register_tokens", 0)
+        if R > 0 and tokens.size(1) > R:
+            tokens = tokens[:, :-R, :]
         N, D_tok = tokens.size(1), tokens.size(2)
         tokens = tokens.view(B, T, N, D_tok)
 
-        # Pre-compute derived features ONCE per batch (not per disease!)
-        derived_features_batch = []
-        for b in range(B):
-            derived = self.feature_bank.compute_derived_features(meta[b], features_row=features_rows[b])
-            derived_features_batch.append(derived)
+        # Cache derived features once per batch
+        derived_batch = [
+            self.feature_bank.compute_derived_features(meta[b], features_row=features_rows[b])
+            for b in range(B)
+        ]
 
-        # Per-disease attention + scalar fusion
         logits_list = []
-
         for disease in self.disease_names:
-            # MaskedUnaryAttnScalar pools a single visual stream per disease; comparative masks (list of masks)
-            # are only supported by OracleCT_DINOv3_MaskedUnaryAttn. For comparative-config diseases, fall back
-            # to a union mask here.
             attn_mask = get_attention_mask_for_disease(
                 disease, masks, disease_rois, meta, device, allow_comparative=False
             )
-            # Get learnable priors for this disease
-            bias_in = self.inside_logit[disease] if self.use_mask_bias else None
+            bias_in  = self.inside_logit[disease]  if self.use_mask_bias else None
             bias_out = self.outside_logit[disease] if self.use_mask_bias else None
+            tau = (0.2 + 1.8 * torch.sigmoid(self.temp_logit[disease])
+                   if self.learn_tau else self.fixed_tau)
 
-            # Get temperature for this disease
-            if self.learn_tau:
-                # Map temp_logit to [0.2, 2.0] range via sigmoid: tau = 0.2 + 1.8 * sigmoid(logit)
-                tau = 0.2 + 1.8 * torch.sigmoid(self.temp_logit[disease])
-            else:
-                tau = self.fixed_tau
-
-            # Visual pooling (union mask)
             mask_tri = masks_3d_to_tri(attn_mask, self.tri_stride)
             mask_tri = F.interpolate(
                 mask_tri.view(B * T, 1, H, W),
                 size=(self.image_size, self.image_size), mode="nearest"
             ).view(B, T, self.image_size, self.image_size)
 
-            # Masked attention pooling WITH learnable priors
-            visual_features = masked_attention_pool(
+            # Visual pooling → [B, D]
+            visual = masked_attention_pool(
                 tokens, mask_tri, self.score_mlps[disease],
                 tau=tau, bias_in=bias_in, bias_out=bias_out
             )
 
-            # Get scalar features for this disease (using cached derived features)
-            scalar_features_list = []
-            for b in range(B):
-                scalars, _ = self.feature_bank.get_features_for_disease(
-                    disease, meta[b], features_row=features_rows[b], normalize=True,
-                    cached_derived=derived_features_batch[b]  # Pass cached!
-                )
-                scalar_features_list.append(scalars.to(device))
+            # Scalar features → [B, S] (S=0 for global-strategy diseases)
+            scalars_list = [
+                self.feature_bank.get_features_for_disease(
+                    disease, meta[b], features_row=features_rows[b],
+                    normalize=True, cached_derived=derived_batch[b]
+                )[0].to(device)
+                for b in range(B)
+            ]
 
-            # PROJECT VISUAL FEATURES to balanced dimension
-            visual_projected = self.visual_projectors[disease](visual_features)  # [B, visual_proj_dim]
-
-            # PROJECT SCALAR FEATURES to balanced dimension (if they exist)
-            # BUGFIX: Check if disease has scalar_projector registered (not if scalars are non-empty)
-            if disease in self.scalar_projectors and scalar_features_list[0].numel() > 0:
-                scalar_features = torch.stack(scalar_features_list, dim=0)  # [B, num_scalars]
-                # Note: ALL features now have binary presence indicators (value, is_present)
-                # Missing values → value=0.0, present=0.0 | Measured values → value=normalized, present=1.0
-
-                scalar_projected = self.scalar_projectors[disease](scalar_features)  # [B, scalar_proj_dim]
-
-                # BALANCED FUSION: Concatenate equal-dimensional projections
-                fused = torch.cat([visual_projected, scalar_projected], dim=1)  # [B, visual_proj_dim + scalar_proj_dim]
+            if scalars_list[0].numel() > 0:
+                scalars = torch.stack(scalars_list, dim=0)  # [B, S]
+                fused   = torch.cat([visual, scalars], dim=1)  # [B, D+S]
             else:
-                # No scalars for this disease - use only visual
-                fused = visual_projected  # [B, visual_proj_dim]
+                fused = visual  # [B, D] — no scalars for this disease
 
-            # FUSION HEAD: Balanced features → logit
-            logit = self.fusion_heads[disease](fused)  # [B, 1]
+            logit = self.heads[disease](fused)
+            if torch.isnan(logit).any():
+                logit = torch.where(torch.isnan(logit), torch.zeros_like(logit), logit)
             logits_list.append(logit)
 
-        logits = torch.cat(logits_list, dim=1)
-
-        return logits
+        return torch.cat(logits_list, dim=1)
 
 
 

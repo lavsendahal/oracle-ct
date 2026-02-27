@@ -1,40 +1,32 @@
 # @package _global_
 
-# 3D ResNet Scalar Fusion experiment: OracleCT_ResNet3D_MaskedUnaryAttnScalar
+# 3D ResNet MaskedUnaryAttnScalar experiment: OracleCT_ResNet3D_MaskedUnaryAttnScalar
+# Organ-guided 3D masked attention + direct scalar fusion (TriageNet-style)
 #
-# Full neuro-symbolic: visual features + scalar features + fusion MLP.
-# Inflated ResNet50 (I3D) pretrained on ImageNet processes [B,1,D,H,W] directly.
-#
-# Pyramid features: f3(1024) + f4(2048) = 3072-dim per disease via 3D masked attention.
-# Visual projected to visual_proj_dim, scalars projected to scalar_proj_dim,
-# both concatenated and passed through fusion MLP → logit.
+# Architecture:
+#   visual [B, D]  (f3 + f4 pyramid, e.g. 3072 for resnet152)
+#   scalars [B, S]  (mean_hu + to_body_ratio + touches_border per organ)
+#   → cat [B, D+S]
+#   → LayerNorm → Linear(D+S → scalar_hidden) → ReLU → Linear(scalar_hidden → 1)
 
 model:
   name: OracleCT_ResNet3D_MaskedUnaryAttnScalar
-  backbone: resnet152        # resnet50 | resnet101 | resnet152
-  pretrained: true          # Initialize with ImageNet weights (inflated to 3D)
-  use_checkpoint: true      # Gradient checkpointing in trunk (saves memory)
+  backbone: resnet152
+  pretrained: true
+  use_checkpoint: true
   num_diseases: 30
-  disease_names: null       # null = use first 30 from ALL_DISEASES
+  disease_names: null
   freeze_backbone: false
   learn_tau: true
   init_tau: 0.7
   use_mask_bias: true
   init_inside: 0.8
   init_outside: 0.2
-  fusion_hidden: 256
-  visual_proj_dim: 256      # Project 3072-dim visual features before fusion
-  scalar_proj_dim: 256      # Project scalar features before fusion
+  scalar_hidden: 256          # fusion MLP hidden dim
   feature_stats_path: ${paths.feature_stats}
 
 training:
   max_epochs: 20
-  # Learnable priors (defined in config.yaml, can override here if needed)
-  # learn_tau: true
-  # init_tau: 0.7
-  # use_mask_bias: true
-  # init_inside: 0.8
-  # init_outside: 0.2
 
 logging:
   use_wandb: false

@@ -12,15 +12,13 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 
-# janus/models/janus_resnet3d_model.py
 """
-Janus Models — Native 3D ResNet Backbone Variants
 
-Four model variants (mirrors janus_model.py for DINOv3):
+Four model variants (mirrors oracle-ct_model.py for DINOv3):
 1. OracleCT_ResNet3D_GAP:          Inflated ResNet50 + Global Average Pooling (baseline)
 2. OracleCT_ResNet3D_MaskedUnaryAttn:   Inflated ResNet50 + 3D Organ-Masked Attention
 3. OracleCT_ResNet3D_MaskedUnaryAttnScalar: Inflated ResNet50 + 3D Masked Attention + Scalar Fusion
-Key difference from DINOv3 JANUS (janus_model.py):
+Key difference from DINOv3 oracle-ct (oracle-ct_model.py):
 - No tri-slice conversion — processes full 3D CT volume [B,1,D,H,W] natively
 - I3D inflation: pretrained 2D ImageNet ResNet50 weights inflated to 3D
 - Pyramid features: f3(1024) + f4(2048) = 3072-dim per disease (models 2–4)
@@ -28,9 +26,9 @@ Key difference from DINOv3 JANUS (janus_model.py):
 - Return interface is identical — inference.py and train.py work unchanged
 
 Usage:
-    python janus/train.py experiment=resnet3d_scalar_fusion dataset=merlin
-    python janus/train.py experiment=resnet3d_masked_attn dataset=merlin
-    python janus/train.py experiment=resnet3d_baseline_gap dataset=merlin
+    python oracle-ct/train.py experiment=resnet3d_scalar_fusion dataset=merlin
+    python oracle-ct/train.py experiment=resnet3d_masked_attn dataset=merlin
+    python oracle-ct/train.py experiment=resnet3d_baseline_gap dataset=merlin
 """
 
 import math
@@ -57,7 +55,7 @@ from .dinov3_oracle_ct import (
 )
 
 
-# ImageNet normalization (same constants as janus_model.py)
+# ImageNet normalization (same constants as oracle-ct_model.py)
 IMN_MEAN = (0.485, 0.456, 0.406)
 IMN_STD  = (0.229, 0.224, 0.225)
 
@@ -276,7 +274,7 @@ def masked_attention_pool_3d(
     """
     Content-aware attention pooling over a 3D feature map restricted to an organ mask.
 
-    Mirrors masked_attention_pool() from janus_model.py but operates on 3D spatial
+    Mirrors masked_attention_pool() from oracle-ct_model.py but operates on 3D spatial
     feature maps [B,C,D',H',W'] instead of ViT token sequences [B,T,N,D].
     """
     B, C, Dp, Hp, Wp = feat_map.shape
@@ -616,11 +614,16 @@ class OracleCT_ResNet3D_MaskedUnaryAttn(nn.Module):
 
 class OracleCT_ResNet3D_MaskedUnaryAttnScalar(nn.Module):
     """
-    Inflated ResNet50 + 3D Masked Attention + Scalar Feature Fusion
+    Inflated ResNet + 3D Masked Attention + Scalar Feature Fusion
 
-    Fuses visual features (3072-dim pyramid) with scalar radiomics features
-    via separate projectors → balanced concatenation → fusion MLP.
-    Same fusion strategy as OracleCT_DINOv3_MaskedUnaryAttnScalar (DINOv3).
+    Architecture matches TriageNet CTDinoV3_ORACLECompat (masked_attn_scalar):
+      visual [B, D]  +  scalars [B, S]
+        → cat [B, D+S]
+        → LayerNorm(D+S) → Linear(D+S → scalar_hidden) → ReLU → Linear(scalar_hidden → 1)
+
+    D = f3_channels + f4_channels (e.g. 3072 for resnet152).
+    Scalars come from a minimal parquet: mean_hu + to_body_ratio + touches_border
+    per disease's primary organ(s). S=0 for global-strategy diseases → visual only.
     """
 
     def __init__(
@@ -637,9 +640,7 @@ class OracleCT_ResNet3D_MaskedUnaryAttnScalar(nn.Module):
         use_mask_bias:   bool  = True,
         init_inside:     float = 0.8,
         init_outside:    float = 0.2,
-        visual_proj_dim: int   = 256,
-        scalar_proj_dim: int   = 256,
-        fusion_hidden:   int   = 256,
+        scalar_hidden:   int   = 256,
         feature_stats_path: Optional[str] = None,
     ):
         super().__init__()
@@ -651,7 +652,7 @@ class OracleCT_ResNet3D_MaskedUnaryAttnScalar(nn.Module):
         self.freeze_backbone = freeze_backbone
 
         self.trunk, self._ch3, self._ch4 = _build_trunk(backbone, pretrained, use_checkpoint)
-        self.hidden_dim = self._ch3 + self._ch4   # 3072
+        self.hidden_dim = self._ch3 + self._ch4  # e.g. 3072
 
         if freeze_backbone:
             for p in self.trunk.parameters():
@@ -661,11 +662,9 @@ class OracleCT_ResNet3D_MaskedUnaryAttnScalar(nn.Module):
         self.feature_bank = FeatureBank(stats_path=feature_stats_path, normalize="zscore")
 
         # Per-disease modules
-        self.score_convs_f3  = nn.ModuleDict()
-        self.score_convs_f4  = nn.ModuleDict()
-        self.visual_projectors = nn.ModuleDict()
-        self.scalar_projectors = nn.ModuleDict()
-        self.fusion_heads      = nn.ModuleDict()
+        self.score_convs_f3 = nn.ModuleDict()
+        self.score_convs_f4 = nn.ModuleDict()
+        self.heads          = nn.ModuleDict()
 
         if use_mask_bias:
             self.inside_logit  = nn.ParameterDict()
@@ -685,41 +684,23 @@ class OracleCT_ResNet3D_MaskedUnaryAttnScalar(nn.Module):
             if learn_tau:
                 self.temp_logit[disease] = nn.Parameter(torch.tensor(inv_sigmoid_temp(init_tau)))
 
-            # Visual projector: 3072 → visual_proj_dim
-            self.visual_projectors[disease] = nn.Sequential(
-                nn.Linear(self.hidden_dim, visual_proj_dim),
-                nn.ReLU(inplace=True),
-            )
-
             config = disease_configs.get(disease)
-            num_scalars = (
-                len(config.scalar_features) + len(config.derived_features)
-            ) if config else 0
+            num_scalars = (len(config.scalar_features) + len(config.derived_features)) if config else 0
 
-            if num_scalars > 0:
-                scalar_hidden = max(64, num_scalars * 4)
-                self.scalar_projectors[disease] = nn.Sequential(
-                    nn.Linear(num_scalars, scalar_hidden),
-                    nn.ReLU(inplace=True),
-                    nn.Linear(scalar_hidden, scalar_proj_dim),
-                    nn.ReLU(inplace=True),
-                )
-
-            fusion_input_dim = visual_proj_dim + (scalar_proj_dim if num_scalars > 0 else 0)
-            self.fusion_heads[disease] = nn.Sequential(
-                nn.LayerNorm(fusion_input_dim),
-                nn.Linear(fusion_input_dim, fusion_hidden),
+            # Direct concat: visual [D] + scalars [S] → MLP → 1
+            fusion_dim = self.hidden_dim + num_scalars
+            self.heads[disease] = nn.Sequential(
+                nn.LayerNorm(fusion_dim),
+                nn.Linear(fusion_dim, scalar_hidden),
                 nn.ReLU(inplace=True),
-                nn.Dropout(0.1),
-                nn.Linear(fusion_hidden, 1),
+                nn.Linear(scalar_hidden, 1),
             )
 
         self.register_buffer("_mean", torch.tensor(IMN_MEAN).view(1, 3, 1, 1, 1))
         self.register_buffer("_std",  torch.tensor(IMN_STD).view(1, 3, 1, 1, 1))
 
         print(f"✓ OracleCT_ResNet3D_MaskedUnaryAttnScalar: {backbone} → "
-              f"f3({self._ch3})+f4({self._ch4})={self.hidden_dim}d → "
-              f"Visual({visual_proj_dim}d) + Scalar({scalar_proj_dim}d) → Fusion({fusion_hidden}d)")
+              f"f3({self._ch3})+f4({self._ch4})={self.hidden_dim}d + scalars → {scalar_hidden}d → 1")
 
     def _normalize(self, x: torch.Tensor) -> torch.Tensor:
         return (x - self._mean) / self._std
@@ -737,14 +718,15 @@ class OracleCT_ResNet3D_MaskedUnaryAttnScalar(nn.Module):
         disease_rois  = batch.get("disease_rois", [{}] * image.size(0))
         meta          = batch.get("meta",         [{}] * image.size(0))
 
-        B = image.size(0)
+        B      = image.size(0)
         device = image.device
 
         image_3ch = image.expand(-1, 3, -1, -1, -1).contiguous()
         image_3ch = self._normalize(image_3ch)
         f3, f4    = self.trunk(image_3ch)
 
-        derived_features_batch = [
+        # Cache derived features once per batch
+        derived_batch = [
             self.feature_bank.compute_derived_features(meta[b], features_row=features_rows[b])
             for b in range(B)
         ]
@@ -764,24 +746,26 @@ class OracleCT_ResNet3D_MaskedUnaryAttnScalar(nn.Module):
                                           tau=tau, bias_in=bias_in, bias_out=bias_out)
             p4 = masked_attention_pool_3d(f4, attn_mask, self.score_convs_f4[disease],
                                           tau=tau, bias_in=bias_in, bias_out=bias_out)
-            visual_features   = torch.cat([p3, p4], dim=1)              # [B, 3072]
-            visual_projected  = self.visual_projectors[disease](visual_features)  # [B, visual_proj_dim]
+            visual = torch.cat([p3, p4], dim=1)  # [B, D]
 
-            if disease in self.scalar_projectors:
-                scalar_list = [
-                    self.feature_bank.get_features_for_disease(
-                        disease, meta[b], features_row=features_rows[b], normalize=True,
-                        cached_derived=derived_features_batch[b],
-                    )[0].to(device)
-                    for b in range(B)
-                ]
-                scalar_features  = torch.stack(scalar_list, dim=0)
-                scalar_projected = self.scalar_projectors[disease](scalar_features)
-                fused = torch.cat([visual_projected, scalar_projected], dim=1)
+            scalars_list = [
+                self.feature_bank.get_features_for_disease(
+                    disease, meta[b], features_row=features_rows[b],
+                    normalize=True, cached_derived=derived_batch[b],
+                )[0].to(device)
+                for b in range(B)
+            ]
+
+            if scalars_list[0].numel() > 0:
+                scalars = torch.stack(scalars_list, dim=0)  # [B, S]
+                fused   = torch.cat([visual, scalars], dim=1)  # [B, D+S]
             else:
-                fused = visual_projected
+                fused = visual  # [B, D] — no scalars for this disease
 
-            logits_list.append(self.fusion_heads[disease](fused))
+            logit = self.heads[disease](fused)
+            if torch.isnan(logit).any():
+                logit = torch.where(torch.isnan(logit), torch.zeros_like(logit), logit)
+            logits_list.append(logit)
 
         return torch.cat(logits_list, dim=1)
 

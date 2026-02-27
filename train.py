@@ -228,7 +228,7 @@ def build_model(cfg: DictConfig) -> nn.Module:
             use_mask_bias=cfg.training.get("use_mask_bias", True),
             init_inside=cfg.training.get("init_inside", 0.8),
             init_outside=cfg.training.get("init_outside", 0.2),
-            fusion_hidden=cfg.model.fusion_hidden,
+            scalar_hidden=cfg.model.get("scalar_hidden", 256),
             feature_stats_path=feature_stats_path,
             use_gradient_checkpointing=cfg.model.get("use_gradient_checkpointing", False),
         )
@@ -326,9 +326,7 @@ def build_model(cfg: DictConfig) -> nn.Module:
             use_mask_bias=cfg.model.get("use_mask_bias", True),
             init_inside=cfg.model.get("init_inside", 0.8),
             init_outside=cfg.model.get("init_outside", 0.2),
-            visual_proj_dim=cfg.model.get("visual_proj_dim", 256),
-            scalar_proj_dim=cfg.model.get("scalar_proj_dim", 256),
-            fusion_hidden=cfg.model.get("fusion_hidden", 256),
+            scalar_hidden=cfg.model.get("scalar_hidden", 256),
             feature_stats_path=feature_stats_path,
         )
     else:
@@ -994,8 +992,7 @@ def main(cfg: DictConfig):
 
         # Name-based parameter grouping (more robust than attribute-based)
         # This ensures ALL parameters are captured, including:
-        # - fusion_heads, visual_projectors, scalar_projectors (OracleCT_DINOv3_MaskedUnaryAttnScalar)
-        # - score_mlps (OracleCT_DINOv3_MaskedUnaryAttn, OracleCT_DINOv3_MaskedUnaryAttnScalar)
+        # - heads, score_mlps (OracleCT_DINOv3_MaskedUnaryAttn, OracleCT_DINOv3_MaskedUnaryAttnScalar)
         # - heads (all models)
         backbone_params = []
         alpha_params = []

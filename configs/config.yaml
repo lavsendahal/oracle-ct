@@ -3,22 +3,13 @@
 
 defaults:
   - _self_
-  - experiment: dinov3_scalar_fusion
+  - experiment: dinov3_gap
   - dataset: merlin  # merlin or duke
 
-# Paths
-# LR Run Directory - contains disease_config_final.py, feature_stats.json, model_weights.json
-# NOTE: Use ${oc.env:VAR_NAME} for environment variables (not $VAR or ${VAR})
-# These are shared across datasets (model trained on Merlin LR baseline)
 paths:
-  # LR pipeline outputs (REQUIRED - from macro-radiomics/ml-examples run)
-  lr_run_dir: /scratch/railabs/ld258/output/ct_triage/macroradiomics/merlin/ml_runs/v1/
-  disease_config: ${paths.lr_run_dir}/disease_config_final.py
-  feature_stats: ${paths.lr_run_dir}/feature_stats.json
-  lr_weights: ${paths.lr_run_dir}/model_weights.json
-
-  # Dataset-specific paths loaded from configs/dataset/*.yaml:
-  #   pack_root, features_parquet, labels_csv, train_ids, val_ids, test_ids
+  disease_config: null
+  # REQUIRED for MaskedUnaryAttnScalar only: path to feature_stats.json
+  feature_stats: null
 
   # Output (on scratch, not in code directory)
   checkpoint: null

@@ -1,7 +1,13 @@
 # @package _global_
 
-# Scalar Fusion experiment: OracleCT_DINOv3_MaskedUnaryAttnScalar
-# Full neuro-symbolic with visual + scalar features + learnable priors
+# MaskedUnaryAttnScalar experiment: OracleCT_DINOv3_MaskedUnaryAttnScalar
+# Organ-guided masked attention + direct scalar fusion (TriageNet-style)
+#
+# Architecture:
+#   visual [B, D] + scalars [B, S]  →  cat [B, D+S]
+#   → LayerNorm → Linear(D+S → scalar_hidden) → ReLU → Linear(scalar_hidden → 1)
+#
+# Scalars: mean_hu + to_body_ratio + touches_border per organ (minimal parquet)
 
 model:
   name: OracleCT_DINOv3_MaskedUnaryAttnScalar
@@ -11,21 +17,12 @@ model:
   image_size: 224
   tri_stride: 1
   freeze_backbone: false
-  use_gradient_checkpointing: true  # CRITICAL for training unfrozen backbone (saves ~50% memory)
-  fusion_hidden: 256
-  visual_proj_dim: 256  # Project visual features to this dimension before fusion
-  scalar_proj_dim: 256  # Project scalar features to this dimension before fusion
+  use_gradient_checkpointing: true
+  scalar_hidden: 256          # fusion MLP hidden dim
   feature_stats_path: ${paths.feature_stats}
-  use_modality_gating: false  # Deprecated - now using separate projectors instead
 
 training:
   max_epochs: 20
-  # Learnable priors (defined in config.yaml, can override here if needed)
-  # learn_tau: true
-  # init_tau: 0.7
-  # use_mask_bias: true
-  # init_inside: 0.8
-  # init_outside: 0.2
 
 logging:
   use_wandb: false
