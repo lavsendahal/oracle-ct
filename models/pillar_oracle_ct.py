@@ -41,9 +41,20 @@ import torch.nn.functional as F
 # Add pillar-finetune to sys.path so MultimodalAtlas can be imported
 # (both live under oracle-ct/, two sibling directories)
 # ---------------------------------------------------------------------------
+import types
+
 _PILLAR_FINETUNE = Path(__file__).resolve().parent.parent.parent / "pillar-finetune"
 if _PILLAR_FINETUNE.exists() and str(_PILLAR_FINETUNE) not in sys.path:
     sys.path.insert(0, str(_PILLAR_FINETUNE))
+
+# pillar/__init__.py eagerly imports pillar.datasets → lifelines → datetime.UTC
+# which only exists in Python 3.11+. Stub it out before the import runs.
+for _stub in [
+    "pillar.datasets", "pillar.datasets.nlst", "pillar.datasets.image_loaders",
+    "pillar.datasets.abstract_loader", "pillar.datasets.nlst_utils",
+    "pillar.engines", "pillar.losses", "pillar.metrics", "pillar.augmentations",
+]:
+    sys.modules.setdefault(_stub, types.ModuleType(_stub))
 
 from pillar.models.backbones.mmatlas import MultimodalAtlas  # noqa: E402
 
