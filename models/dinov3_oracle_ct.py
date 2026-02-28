@@ -39,6 +39,7 @@ from transformers import AutoModel
 from ..configs.disease_config import (
     ORGAN_TO_CHANNEL,
     get_all_diseases,
+    get_all_disease_configs,
 )
 from ..configs.disease_config_oracle_ct import DISEASE_CONFIGS as ORACLE_SCALAR_CONFIGS
 

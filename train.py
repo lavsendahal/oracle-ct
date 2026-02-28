@@ -58,7 +58,7 @@ from oracle_ct.models.resnet3d_oracle_ct import (
     OracleCT_ResNet3D_MaskedUnaryAttn, OracleCT_ResNet3D_MaskedUnaryAttnScalar)
 
 from oracle_ct.datamodules.dataset import JanusDataset, janus_collate_fn
-from oracle_ct.configs.disease_config import get_all_diseases
+from oracle_ct.configs.disease_config import get_all_diseases, load_config_globally
 
 
 # =============================================================================
@@ -761,6 +761,10 @@ def main(cfg: DictConfig):
     ]:
         features_parquet = cfg.paths.get("features_parquet")
         feature_columns = cfg.model.get("feature_columns")  # Optional: specific columns to use
+
+    # Load disease config (must happen before get_all_diseases())
+    disease_config_path = Path(__file__).parent / "configs" / "disease_config_oracle_ct.py"
+    load_config_globally(str(disease_config_path))
 
     # IMPORTANT: Ensure label/metric disease order matches model output order.
     # Get disease names from dynamically loaded config (from LR pipeline).
