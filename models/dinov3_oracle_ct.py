@@ -26,7 +26,9 @@ Key improvements over previous implementation:
 - Liver-spleen HU difference for steatosis
 """
 
+import json
 import math
+from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple, Union
 
 import torch
@@ -36,10 +38,9 @@ from transformers import AutoModel
 
 from ..configs.disease_config import (
     ORGAN_TO_CHANNEL,
-    get_all_disease_configs,
     get_all_diseases,
 )
-from ..datamodules.feature_bank import FeatureBank
+from ..configs.disease_config_oracle_ct import DISEASE_CONFIGS as ORACLE_SCALAR_CONFIGS
 
 
 # ImageNet normalization
@@ -966,7 +967,12 @@ class OracleCT_DINOv3_MaskedUnaryAttnScalar(nn.Module):
         self.use_mask_bias = use_mask_bias
         self.variant = variant.upper()
 
-        self.feature_bank = FeatureBank(stats_path=feature_stats_path, normalize="zscore")
+        if not feature_stats_path:
+            raise ValueError("feature_stats_path is required for MaskedUnaryAttnScalar")
+        if not Path(feature_stats_path).exists():
+            raise FileNotFoundError(f"feature_stats not found: {feature_stats_path}")
+        with open(feature_stats_path) as f:
+            self._feature_stats: Dict[str, Dict[str, float]] = json.load(f)
 
         if self.variant not in DINOV3_HF_IDS:
             raise ValueError(f"Invalid variant '{variant}'. Must be one of: {list(DINOV3_HF_IDS.keys())}")
@@ -997,8 +1003,6 @@ class OracleCT_DINOv3_MaskedUnaryAttnScalar(nn.Module):
         if learn_tau:
             self.temp_logit = nn.ParameterDict()
 
-        disease_configs = get_all_disease_configs()
-
         for disease in self.disease_names:
             self.score_mlps[disease] = nn.Linear(self.hidden_dim, 1)
 
@@ -1008,8 +1012,8 @@ class OracleCT_DINOv3_MaskedUnaryAttnScalar(nn.Module):
             if learn_tau:
                 self.temp_logit[disease] = nn.Parameter(torch.tensor(inv_sigmoid_temp(init_tau)))
 
-            config = disease_configs.get(disease)
-            num_scalars = (len(config.scalar_features) + len(config.derived_features)) if config else 0
+            config = ORACLE_SCALAR_CONFIGS.get(disease)
+            num_scalars = len(config.scalar_features) if config else 0
 
             # Direct concat: visual [D] + scalars [S] → MLP → 1
             fusion_dim = self.hidden_dim + num_scalars
@@ -1032,6 +1036,32 @@ class OracleCT_DINOv3_MaskedUnaryAttnScalar(nn.Module):
         if self.freeze_backbone:
             self.backbone.eval()
         return self
+
+    def _get_scalars(self, disease: str, features_row, device: torch.device) -> torch.Tensor:
+        """Look up parquet features for this disease and z-score normalize."""
+        config = ORACLE_SCALAR_CONFIGS.get(disease)
+        feature_names = config.scalar_features if config else []
+        if not feature_names:
+            return torch.empty(0, device=device)  # global disease — no scalars by design
+        if features_row is None:
+            raise RuntimeError(
+                f"MaskedUnaryAttnScalar requires a features parquet but features_row is None "
+                f"for disease '{disease}'. Pass features_parquet to the dataset."
+            )
+        values = []
+        for name in feature_names:
+            try:
+                val = float(features_row.get(name, float("nan")))
+            except (TypeError, ValueError):
+                val = float("nan")
+            if math.isnan(val):
+                val = 0.0  # mean-impute (mean = 0 in z-score space)
+            else:
+                s = self._feature_stats.get(name, {})
+                std = s.get("std", 1.0) or 1.0
+                val = (val - s.get("mean", 0.0)) / std
+            values.append(val)
+        return torch.tensor(values, dtype=torch.float32, device=device)
 
     def forward(self, batch: Dict[str, Any], **kwargs) -> torch.Tensor:
         image        = batch["image"]
@@ -1062,12 +1092,6 @@ class OracleCT_DINOv3_MaskedUnaryAttnScalar(nn.Module):
         N, D_tok = tokens.size(1), tokens.size(2)
         tokens = tokens.view(B, T, N, D_tok)
 
-        # Cache derived features once per batch
-        derived_batch = [
-            self.feature_bank.compute_derived_features(meta[b], features_row=features_rows[b])
-            for b in range(B)
-        ]
-
         logits_list = []
         for disease in self.disease_names:
             attn_mask = get_attention_mask_for_disease(
@@ -1090,12 +1114,9 @@ class OracleCT_DINOv3_MaskedUnaryAttnScalar(nn.Module):
                 tau=tau, bias_in=bias_in, bias_out=bias_out
             )
 
-            # Scalar features → [B, S] (S=0 for global-strategy diseases)
+            # Scalar features → [B, S] (S=0 for global diseases)
             scalars_list = [
-                self.feature_bank.get_features_for_disease(
-                    disease, meta[b], features_row=features_rows[b],
-                    normalize=True, cached_derived=derived_batch[b]
-                )[0].to(device)
+                self._get_scalars(disease, features_rows[b], device)
                 for b in range(B)
             ]
 

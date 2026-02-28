@@ -25,8 +25,8 @@ import pandas as pd
 
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from janus.datamodules.class_map import ORGAN_NAMES
-from janus.datamodules.roi_utils import create_appendix_bbox_mask
+from oracle_ct.datamodules.class_map import ORGAN_NAMES
+from oracle_ct.datamodules.roi_utils import create_appendix_bbox_mask
 
 
 def print_pack_summary(pack: Dict[str, Any], case_id: str):

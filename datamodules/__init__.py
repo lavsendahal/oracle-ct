@@ -13,4 +13,3 @@ from .packing import JanusPacker, PackBuilder, PackConfig, load_pack
 
 from .dataset import JanusDataset, janus_collate_fn, create_dataloader
 
-from .feature_bank import FeatureBank, compute_feature_statistics

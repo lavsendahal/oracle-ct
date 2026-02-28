@@ -267,7 +267,7 @@ Available loss functions:
    - Use when labels contain {0, 1, -1}
 
 Usage:
-    from janus.losses import build_loss_fn
+    from oracle_ct.losses import build_loss_fn
 
     # Standard BCE
     loss_fn = build_loss_fn("bce_with_logits", pos_weight=weights)

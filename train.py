@@ -27,10 +27,8 @@ from pathlib import Path
 import warnings
 warnings.filterwarnings("ignore")
 
-# Add parent to path
+# Add parent to path so oracle_ct is importable as a package
 sys.path.insert(0, str(Path(__file__).parent.parent))
-# Add oracle-ct directory to path for self-contained model imports
-sys.path.insert(0, str(Path(__file__).parent))
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -51,16 +49,16 @@ except ImportError:
     WANDB_AVAILABLE = False
     print("Warning: wandb not installed. Install with: pip install wandb")
 
-from janus.losses import build_loss_from_config, BCEUncertainLoss
-from models.dinov3_oracle_ct import (
+from oracle_ct.losses import build_loss_from_config, BCEUncertainLoss
+from oracle_ct.models.dinov3_oracle_ct import (
     OracleCT_DINOv3_GAP, OracleCT_DINOv3_UnaryAttnPool,
     OracleCT_DINOv3_MaskedUnaryAttn, OracleCT_DINOv3_MaskedUnaryAttnScalar)
-from models.resnet3d_oracle_ct import (
+from oracle_ct.models.resnet3d_oracle_ct import (
     OracleCT_ResNet3D_GAP, OracleCT_ResNet3D_UnaryAttnPool,
     OracleCT_ResNet3D_MaskedUnaryAttn, OracleCT_ResNet3D_MaskedUnaryAttnScalar)
 
-from janus.datamodules.dataset import JanusDataset, janus_collate_fn
-from janus.configs.disease_config import load_config_globally, get_all_diseases
+from oracle_ct.datamodules.dataset import JanusDataset, janus_collate_fn
+from oracle_ct.configs.disease_config import get_all_diseases
 
 
 # =============================================================================
@@ -682,22 +680,6 @@ def compute_metrics(probs: np.ndarray, labels: np.ndarray, disease_names=None):
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def main(cfg: DictConfig):
     """Main training function."""
-
-    # ==========================================================================
-    # LOAD DISEASE CONFIG FROM LR PIPELINE OUTPUT
-    # ==========================================================================
-    # The disease config (with pruned features) comes from the logistic regression
-    # pipeline. This ensures we use the same features that were selected by the LR.
-    disease_config_path = cfg.paths.get("disease_config")
-    if disease_config_path:
-        load_config_globally(disease_config_path)
-        print(f"\n✓ Loaded disease config from LR pipeline: {disease_config_path}")
-    else:
-        raise ValueError(
-            "paths.disease_config is required. "
-            "Set it to the disease_config_final.py from your LR run, e.g.:\n"
-            "  paths.disease_config=/path/to/lr_run/disease_config_final.py"
-        )
 
     # Initialize DDP if requested
     use_ddp = cfg.training.get("use_ddp", False)

@@ -17,8 +17,8 @@ Key Features:
 - SBO diameter ratio (small_bowel / colon)
 
 Usage:
-    from janus.models import build_model_from_config
-    from janus.datamodules import JanusDataset, FeatureBank
+    from oracle_ct.models import build_model_from_config
+    from oracle_ct.datamodules import JanusDataset
 
     model = build_model_from_config({
         "model_type": "masked_unary_attn_scalar",

@@ -43,10 +43,10 @@ from tqdm import tqdm
 # Add parent to path (repo root)
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from janus.train import build_model, ddp_setup, init_distributed, ddp_cleanup, is_main_process
-from janus.datamodules.dataset import JanusDataset, janus_collate_fn
-from janus.configs.disease_config import load_config_globally, get_all_diseases
-from janus.train import compute_metrics
+from oracle_ct.train import build_model, ddp_setup, init_distributed, ddp_cleanup, is_main_process
+from oracle_ct.datamodules.dataset import JanusDataset, janus_collate_fn
+from oracle_ct.configs.disease_config import load_config_globally, get_all_diseases
+from oracle_ct.train import compute_metrics
 
 
 def load_ids_from_file(path: str) -> List[str]:

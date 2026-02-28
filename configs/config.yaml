@@ -7,13 +7,13 @@ defaults:
   - dataset: merlin  # merlin or duke
 
 paths:
-  disease_config: null
-  # REQUIRED for MaskedUnaryAttnScalar only: path to feature_stats.json
-  feature_stats: null
+  # REQUIRED for MaskedUnaryAttnScalar only
+  features_parquet: null   # path to features_minimal.parquet
+  feature_stats: null      # path to feature_stats.json
 
   # Output (on scratch, not in code directory)
   checkpoint: null
-  output_root: /scratch/railabs/ld258/output/ct_triage/janus/runs/
+  output_root: /scratch/railabs/ld258/output/ct_triage/oracle-ct/runs/
 
 # Dataset
 dataset:

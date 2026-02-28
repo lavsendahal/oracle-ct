@@ -1,54 +1,48 @@
 #!/bin/bash
-#SBATCH --job-name=resnet3d_train
+#SBATCH --job-name=oracle_ct_train
 #SBATCH --nodes=1
 ##SBATCH --nodelist=node001
-#SBATCH --gres=gpu:a6000:4
-#SBATCH --cpus-per-task=64
-#SBATCH --output=/home/ld258/ipredict/slurm_logs/miccai/janus-resnet-output-%j.out
-#SBATCH --error=/home/ld258/ipredict/slurm_logs/miccai/janus-resnet-error-%j.out
+#SBATCH --gres=gpu:a6000:2
+#SBATCH --cpus-per-task=32
+#SBATCH --output=/home/ld258/ipredict/slurm_logs/oracle-ct/output-%j.out
+#SBATCH --error=/home/ld258/ipredict/slurm_logs/oracle-ct/error-%j.out
 
 # Default: use all available GPUs
 NGPUS=${NGPUS:-$(nvidia-smi -L | wc -l)}
 
-# Activate conda
 module load miniconda/py39_4.12.0
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate fvlm
-export PYTHONPATH=$IPREDICT_ROOT/neuro_symbolic/:$PYTHONPATH
+export PYTHONPATH=/home/ld258/ipredict/oracle-ct:$PYTHONPATH
 
 export MASTER_ADDR=$(hostname -s)
 export MASTER_PORT=$((10000 + RANDOM % 50000))
 
 export HF_TOKEN=$HUGGINGFACE_HUB_TOKEN
-
 export HF_HOME=$SCRATCH/hf_home
 export HF_HUB_CACHE=$HF_HOME/hub
 
 # Optimize CPU threading for multi-GPU + DataLoader workers
 # Formula: total_cores / (num_gpus * (1 + num_workers))
-# 128 cores / (8 GPUs * (1 main + 4 workers)) = 128/40 ≈ 3
 export OMP_NUM_THREADS=3
-export MKL_NUM_THREADS=3  # For Intel MKL (if used)
+export MKL_NUM_THREADS=3
 
 echo "CPU Threading Configuration:"
 echo "  OMP_NUM_THREADS: $OMP_NUM_THREADS"
 echo "  MKL_NUM_THREADS: $MKL_NUM_THREADS"
 
-
-
 echo "========================================"
-echo "Janus - Multi-GPU Training"
+echo "OracleCT - Multi-GPU Training"
 echo "========================================"
 echo "Number of GPUs: $NGPUS"
 echo "Arguments: $@"
 echo "========================================"
 echo ""
 
-
 torchrun \
     --standalone \
     --nnodes=1 \
     --nproc_per_node=$NGPUS \
-    /home/ld258/ipredict/janus/train.py \
+    /home/ld258/ipredict/oracle-ct/oracle_ct/train.py \
     training.use_ddp=true \
     "$@"
