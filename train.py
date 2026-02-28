@@ -56,9 +56,15 @@ from oracle_ct.models.dinov3_oracle_ct import (
 from oracle_ct.models.resnet3d_oracle_ct import (
     OracleCT_ResNet3D_GAP, OracleCT_ResNet3D_UnaryAttnPool,
     OracleCT_ResNet3D_MaskedUnaryAttn, OracleCT_ResNet3D_MaskedUnaryAttnScalar)
+from oracle_ct.models.pillar_oracle_ct import (
+    OracleCT_Pillar_GAP, OracleCT_Pillar_MaskedAttn)
 
 from oracle_ct.datamodules.dataset import JanusDataset, janus_collate_fn
+from oracle_ct.datamodules.pillar_dataset import PillarDataset, pillar_collate_fn
 from oracle_ct.configs.disease_config import get_all_diseases, load_config_globally
+
+# Models that use PillarDataset (11-channel 384³ input from RAVE LZ4 packs)
+_PILLAR_MODEL_NAMES = {"OracleCT_Pillar_GAP", "OracleCT_Pillar_MaskedAttn"}
 
 
 # =============================================================================
@@ -326,6 +332,33 @@ def build_model(cfg: DictConfig) -> nn.Module:
             init_outside=cfg.model.get("init_outside", 0.2),
             scalar_hidden=cfg.model.get("scalar_hidden", 256),
             feature_stats_path=feature_stats_path,
+        )
+    # ------------------------------------------------------------------
+    # Pillar-0 models (Option B: 11-channel 384³ input)
+    # ------------------------------------------------------------------
+    elif model_name == "OracleCT_Pillar_GAP":
+        model = OracleCT_Pillar_GAP(
+            num_diseases=cfg.model.num_diseases,
+            disease_names=cfg.model.get("disease_names", None),
+            model_repo_id=cfg.model.get("model_repo_id", "YalaLab/Pillar0-AbdomenCT"),
+            model_revision=cfg.model.get("model_revision", None),
+            freeze_backbone=cfg.model.get("freeze_backbone", False),
+            modality=cfg.model.get("modality", "abdomen_ct"),
+        )
+    elif model_name == "OracleCT_Pillar_MaskedAttn":
+        model = OracleCT_Pillar_MaskedAttn(
+            num_diseases=cfg.model.num_diseases,
+            disease_names=cfg.model.get("disease_names", None),
+            model_repo_id=cfg.model.get("model_repo_id", "YalaLab/Pillar0-AbdomenCT"),
+            model_revision=cfg.model.get("model_revision", None),
+            freeze_backbone=cfg.model.get("freeze_backbone", False),
+            modality=cfg.model.get("modality", "abdomen_ct"),
+            learn_tau=cfg.model.get("learn_tau", True),
+            init_tau=cfg.model.get("init_tau", 0.7),
+            fixed_tau=cfg.model.get("fixed_tau", 1.0),
+            use_mask_bias=cfg.model.get("use_mask_bias", True),
+            init_inside=cfg.model.get("init_inside", 0.8),
+            init_outside=cfg.model.get("init_outside", 0.2),
         )
     else:
         raise ValueError(f"Unknown model: {model_name}")
@@ -788,29 +821,57 @@ def main(cfg: DictConfig):
         print(f"  Preset: {aug_preset}")
         print(f"  Params: {aug_params}")
 
-    train_dataset = JanusDataset(
-        pack_root=cfg.paths.pack_root,
-        labels_csv=cfg.paths.labels_csv,
-        case_ids=train_ids,
-        features_parquet=features_parquet,
-        feature_columns=feature_columns,
-        disease_names=disease_names_cfg,
-        cache_packs=False,  # Dataset too large for full caching
-        use_augmentation=use_augmentation,  # Enable augmentation for training
-        aug_preset=aug_preset,
-        aug_params=aug_params,
-    )
+    # Select dataset class: Pillar models need PillarDataset (384³ RAVE LZ4 packs)
+    use_pillar_dataset = cfg.model.name in _PILLAR_MODEL_NAMES
 
-    val_dataset = JanusDataset(
-        pack_root=cfg.paths.pack_root,
-        labels_csv=cfg.paths.labels_csv,
-        case_ids=val_ids,
-        features_parquet=features_parquet,
-        feature_columns=feature_columns,
-        disease_names=disease_names_cfg,
-        cache_packs=False,  # Dataset too large for full caching
-        use_augmentation=False,  # No augmentation for validation
-    )
+    if use_pillar_dataset:
+        if is_main_process():
+            print("\nUsing PillarDataset (384³ RAVE LZ4 packs + mask packs)")
+        train_dataset = PillarDataset(
+            pillar_pack_root=cfg.paths.pillar_pack_root,
+            mask_pack_root=cfg.paths.pack_root,
+            labels_csv=cfg.paths.labels_csv,
+            case_ids=train_ids,
+            features_parquet=features_parquet,
+            feature_columns=feature_columns,
+            disease_names=disease_names_cfg,
+            cache_packs=False,
+        )
+        val_dataset = PillarDataset(
+            pillar_pack_root=cfg.paths.pillar_pack_root,
+            mask_pack_root=cfg.paths.pack_root,
+            labels_csv=cfg.paths.labels_csv,
+            case_ids=val_ids,
+            features_parquet=features_parquet,
+            feature_columns=feature_columns,
+            disease_names=disease_names_cfg,
+            cache_packs=False,
+        )
+        collate_fn = pillar_collate_fn
+    else:
+        train_dataset = JanusDataset(
+            pack_root=cfg.paths.pack_root,
+            labels_csv=cfg.paths.labels_csv,
+            case_ids=train_ids,
+            features_parquet=features_parquet,
+            feature_columns=feature_columns,
+            disease_names=disease_names_cfg,
+            cache_packs=False,  # Dataset too large for full caching
+            use_augmentation=use_augmentation,  # Enable augmentation for training
+            aug_preset=aug_preset,
+            aug_params=aug_params,
+        )
+        val_dataset = JanusDataset(
+            pack_root=cfg.paths.pack_root,
+            labels_csv=cfg.paths.labels_csv,
+            case_ids=val_ids,
+            features_parquet=features_parquet,
+            feature_columns=feature_columns,
+            disease_names=disease_names_cfg,
+            cache_packs=False,  # Dataset too large for full caching
+            use_augmentation=False,  # No augmentation for validation
+        )
+        collate_fn = janus_collate_fn
 
     # Get disease names for metrics
     disease_names = train_dataset.disease_names
@@ -845,7 +906,7 @@ def main(cfg: DictConfig):
         pin_memory=cfg.dataset.pin_memory,
         persistent_workers=cfg.dataset.persistent_workers,
         prefetch_factor=cfg.dataset.prefetch_factor,
-        collate_fn=janus_collate_fn,
+        collate_fn=collate_fn,
     )
 
     val_loader = DataLoader(
@@ -857,7 +918,7 @@ def main(cfg: DictConfig):
         pin_memory=cfg.dataset.pin_memory,
         persistent_workers=cfg.dataset.persistent_workers,
         prefetch_factor=cfg.dataset.prefetch_factor,
-        collate_fn=janus_collate_fn,
+        collate_fn=collate_fn,
     )
 
     if is_main_process():
@@ -1195,6 +1256,8 @@ def main(cfg: DictConfig):
                     "OracleCT_ResNet3D_UnaryAttnPool": "resnet_unary_attn_pool",
                     "OracleCT_ResNet3D_MaskedUnaryAttn": "resnet_masked_unary_attn",
                     "OracleCT_ResNet3D_MaskedUnaryAttnScalar": "resnet_masked_unary_attn_scalar",
+                    "OracleCT_Pillar_GAP": "pillar_gap",
+                    "OracleCT_Pillar_MaskedAttn": "pillar_masked_attn",
                 }
                 model_short = model_name_map.get(cfg.model.name, cfg.model.name.lower())
 

@@ -1,0 +1,43 @@
+# @package _global_
+
+# Pillar-0 + 3D Organ-Masked Attention (Option B with anatomical guidance)
+#
+# Uses pretrained Pillar-0 AbdomenCT backbone with all 11 HU windows intact.
+# Input: [B, 11, 384, 384, 384] from PillarDataset
+# Features: spatial activ [B, 1152, 64, 64, 64] → 3D masked attention → per-disease Linear(1152, 1)
+#
+# Organ masks from existing .pt packs (224×224×160) are resized online
+# to [64, 64, 64] for attention pooling — no repacking of masks needed.
+#
+# Train from pillar-pretrain/oracle-ct/:
+#   torchrun --nproc_per_node=4 train.py \
+#     experiment=pillar_masked_attn \
+#     dataset=merlin_pillar \
+#     model.model_repo_id=/path/to/local/pillar_model
+
+model:
+  name: OracleCT_Pillar_MaskedAttn
+  num_diseases: 30
+  disease_names: null               # null = use first 30 from ALL_DISEASES
+  model_repo_id: "YalaLab/Pillar0-AbdomenCT"  # HuggingFace repo or local path
+  model_revision: null              # null = latest
+  freeze_backbone: false            # fine-tune backbone end-to-end
+  modality: abdomen_ct
+  learn_tau: true
+  init_tau: 0.7
+  use_mask_bias: true
+  init_inside: 0.8
+  init_outside: 0.2
+
+training:
+  max_epochs: 20
+  learning_rate: 1e-4               # lower LR for large pretrained backbone
+  warmup_epochs: 2
+  use_group_lrs: true
+  head_lr_scale: 5.0                # score_convs + heads learn faster
+  alpha_lr_scale: 0.3               # temperature + bias params slower
+  gradient_accumulation_steps: 4   # Pillar is large; accumulate to match effective batch
+  use_amp: true
+
+logging:
+  use_wandb: false

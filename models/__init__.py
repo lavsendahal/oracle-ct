@@ -15,3 +15,8 @@ from .resnet3d_oracle_ct import (
     OracleCT_ResNet3D_MaskedUnaryAttn,
     OracleCT_ResNet3D_MaskedUnaryAttnScalar,
 )
+
+from .pillar_oracle_ct import (
+    OracleCT_Pillar_GAP,
+    OracleCT_Pillar_MaskedAttn,
+)
