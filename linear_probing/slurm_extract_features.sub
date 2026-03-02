@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=pillar_extract
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:a6000:1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+#SBATCH --gres=gpu:a6000:4
+#SBATCH --cpus-per-task=64
+#SBATCH --mem=256G
 #SBATCH --output=/home/ld258/ipredict/slurm_logs/oracle-ct/pillar_extract-output-%j.out
 #SBATCH --error=/home/ld258/ipredict/slurm_logs/oracle-ct/pillar_extract-error-%j.out
 
@@ -17,22 +17,37 @@ export HF_HOME=$SCRATCH/hf_home
 export HF_HUB_CACHE=$HF_HOME/hub
 export OMP_NUM_THREADS=4
 export MKL_NUM_THREADS=4
+export NCCL_IB_DISABLE=1
+export NCCL_P2P_LEVEL=NVL
 
+NGPUS=4
 PILLAR_MODEL=/scratch/railabs/ld258/output/ct_triage/oracle-ct/pretrained_models/Pillar0-AbdomenCT
 FEATURES_DIR=/scratch/railabs/ld258/output/ct_triage/oracle-ct/pillar_features
+
+# Sanity check: set MAX_CASES=10 to extract only 10 cases per split and verify
+# no NaN before running the full extraction. Set to "" for full run.
+MAX_CASES=${MAX_CASES:-""}
 
 # Seed modules cache (same fix as slurm_train_pillar_e2e.sub)
 MODULES_CACHE=$HF_HOME/modules/transformers_modules/Pillar0-AbdomenCT
 mkdir -p $MODULES_CACHE
 cp $PILLAR_MODEL/*.py $MODULES_CACHE/
 
-# Delete any previously extracted features that may be corrupted (fp16 NaN bug)
-echo "Removing old feature files (may be corrupted by fp16 NaN bug)..."
+# Delete any previously extracted features and leftover shards
+echo "Removing old feature files and shard files..."
 rm -f ${FEATURES_DIR}/train_features.pt \
       ${FEATURES_DIR}/val_features.pt \
       ${FEATURES_DIR}/test_features.pt
+rm -f ${FEATURES_DIR}/*_features_rank*.pt
 
-python /home/ld258/ipredict/oracle-ct/oracle_ct/linear_probing/extract_pillar_features.py \
+MAX_CASES_ARG=""
+if [ -n "$MAX_CASES" ]; then
+    MAX_CASES_ARG="--max_cases $MAX_CASES"
+    echo "SANITY CHECK MODE: extracting $MAX_CASES cases per split"
+fi
+
+torchrun --standalone --nnodes=1 --nproc_per_node=$NGPUS \
+    /home/ld258/ipredict/oracle-ct/oracle_ct/linear_probing/extract_pillar_features.py \
     --pillar_pack_root /cachedata/ld258/janus/merlin/pillar_packs_384 \
     --mask_pack_root   /cachedata/ld258/janus/merlin/packs \
     --labels_csv       /scratch/railabs/ld258/dataset/merlin/merlinabdominalctdataset/zero_shot_findings_disease_cls.csv \
@@ -41,7 +56,8 @@ python /home/ld258/ipredict/oracle-ct/oracle_ct/linear_probing/extract_pillar_fe
     --test_ids         /home/ld258/ipredict/janus/splits/test_ids.txt \
     --output_dir       ${FEATURES_DIR} \
     --model_repo_id    ${PILLAR_MODEL} \
-    --batch_size       4 \
-    --num_workers      4
+    --batch_size       2 \
+    --num_workers      0 \
+    $MAX_CASES_ARG
 
 echo "Features saved to: ${FEATURES_DIR}"
