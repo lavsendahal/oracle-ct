@@ -67,6 +67,15 @@ def train_linear_probe(args):
     print(f"Feature dim: {feat_dim}  |  Diseases: {num_diseases}")
     print(f"Train: {train_data['features'].shape[0]}  Val: {val_data['features'].shape[0]}  Test: {test_data['features'].shape[0]}")
 
+    # Sanity check — NaN features mean extraction used fp16 instead of bf16
+    for split_name, split_data in [("train", train_data), ("val", val_data), ("test", test_data)]:
+        n_nan = torch.isnan(split_data["features"]).sum().item()
+        if n_nan > 0:
+            raise ValueError(
+                f"{split_name} features contain {n_nan} NaN values. "
+                "Re-run extract_pillar_features.py (bf16 fix already applied)."
+            )
+
     def make_loader(data, shuffle):
         feat   = data["features"].float()
         labels = data["labels"].float()
@@ -99,7 +108,7 @@ def train_linear_probe(args):
     # ------------------------------------------------------------------
     # Training loop
     # ------------------------------------------------------------------
-    best_val_auc = 0.0
+    best_val_auc = -1.0
     best_ckpt    = output_dir / "best_linear_probe.pt"
     history      = []
 

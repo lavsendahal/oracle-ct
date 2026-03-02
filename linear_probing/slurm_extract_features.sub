@@ -18,7 +18,19 @@ export HF_HUB_CACHE=$HF_HOME/hub
 export OMP_NUM_THREADS=4
 export MKL_NUM_THREADS=4
 
-FEATURES_DIR="/scratch/railabs/ld258/output/ct_triage/oracle-ct/pillar_features"
+PILLAR_MODEL=/scratch/railabs/ld258/output/ct_triage/oracle-ct/pretrained_models/Pillar0-AbdomenCT
+FEATURES_DIR=/scratch/railabs/ld258/output/ct_triage/oracle-ct/pillar_features
+
+# Seed modules cache (same fix as slurm_train_pillar_e2e.sub)
+MODULES_CACHE=$HF_HOME/modules/transformers_modules/Pillar0-AbdomenCT
+mkdir -p $MODULES_CACHE
+cp $PILLAR_MODEL/*.py $MODULES_CACHE/
+
+# Delete any previously extracted features that may be corrupted (fp16 NaN bug)
+echo "Removing old feature files (may be corrupted by fp16 NaN bug)..."
+rm -f ${FEATURES_DIR}/train_features.pt \
+      ${FEATURES_DIR}/val_features.pt \
+      ${FEATURES_DIR}/test_features.pt
 
 python /home/ld258/ipredict/oracle-ct/oracle_ct/linear_probing/extract_pillar_features.py \
     --pillar_pack_root /cachedata/ld258/janus/merlin/pillar_packs_384 \
@@ -28,7 +40,7 @@ python /home/ld258/ipredict/oracle-ct/oracle_ct/linear_probing/extract_pillar_fe
     --val_ids          /home/ld258/ipredict/janus/splits/val_ids.txt \
     --test_ids         /home/ld258/ipredict/janus/splits/test_ids.txt \
     --output_dir       ${FEATURES_DIR} \
-    --model_repo_id    YalaLab/Pillar0-AbdomenCT \
+    --model_repo_id    ${PILLAR_MODEL} \
     --batch_size       4 \
     --num_workers      4
 

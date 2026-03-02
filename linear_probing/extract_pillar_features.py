@@ -115,8 +115,9 @@ def extract_split(backbone, dataset, device, batch_size, num_workers, modality):
     for batch in tqdm(loader, desc="Extracting"):
         image = batch["image"].to(device)         # [B, 11, 384, 384, 384]
 
-        # AMP for memory efficiency — matches pillar-finetune (bf16-mixed)
-        with torch.cuda.amp.autocast(dtype=torch.float16):
+        # Use bfloat16 — matches pillar-finetune (bf16-mixed).
+        # fp16 causes NaN from L2-norm underflow inside the Pillar backbone.
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
             output = backbone(image, batch={"anatomy": [modality] * image.shape[0]})
 
         pooled = output["pooled"].cpu().float()   # [B, 1152]

@@ -9,26 +9,22 @@
 # Organ masks from existing .pt packs (224×224×160) are resized online
 # to [64, 64, 64] for attention pooling — no repacking of masks needed.
 #
-# Train (8-GPU end-to-end fine-tune):
-#   torchrun --nproc_per_node=8 train.py \
-#     experiment=pillar_masked_attn \
-#     dataset=merlin_pillar \
-#     training.use_ddp=true \
-#     model.model_repo_id=/path/to/local/pillar_model
+# Use slurm_train_pillar_e2e.sub — it handles the modules cache, 8 GPUs, and model path.
+#
+# Fresh run:
+#   sbatch slurm_train_pillar_e2e.sub experiment=pillar_masked_attn dataset=merlin_pillar
 #
 # Resume after preemption:
-#   torchrun --nproc_per_node=8 train.py \
-#     experiment=pillar_masked_attn \
-#     dataset=merlin_pillar \
-#     training.use_ddp=true \
-#     training.resume_from_checkpoint=/path/to/run/checkpoints/pillar_masked_attn_last.pt
+#   sbatch slurm_train_pillar_e2e.sub \
+#     experiment=pillar_masked_attn dataset=merlin_pillar \
+#     training.resume_from_checkpoint=/path/to/checkpoints/pillar_masked_attn_last.pt
 
 model:
   name: OracleCT_Pillar_MaskedAttn
   num_diseases: 30
   disease_names: null               # null = use first 30 from ALL_DISEASES
-  model_repo_id: "YalaLab/Pillar0-AbdomenCT"  # HuggingFace repo or local path
-  model_revision: null              # null = latest
+  model_repo_id: "/scratch/railabs/ld258/output/ct_triage/oracle-ct/pretrained_models/Pillar0-AbdomenCT"
+  model_revision: null
   freeze_backbone: false            # fine-tune backbone end-to-end
   modality: abdomen_ct
   learn_tau: true
@@ -38,6 +34,15 @@ model:
   init_outside: 0.2
   use_gradient_checkpointing: true  # saves ~40% activation memory for large backbone
 
+dataset:
+  # Pillar input is 11×384³ ≈ 1.2 GB/sample in fp16.
+  # GPU budget (48 GB A6000, grad checkpointing):
+  #   ~20 GB fixed overhead → ~28 GB for batch → batch_size=4 safe, try 6 if no OOM.
+  # Effective batch = 4 × 8 GPUs × 4 accum = 128.
+  batch_size: 1
+  num_workers: 2
+  prefetch_factor: 2
+
 training:
   max_epochs: 20
   learning_rate: 1e-4               # lower LR for large pretrained backbone
@@ -45,7 +50,7 @@ training:
   use_group_lrs: true
   head_lr_scale: 5.0                # score_convs + heads learn faster
   alpha_lr_scale: 0.3               # temperature + bias params slower
-  gradient_accumulation_steps: 4   # Pillar is large; accumulate to match effective batch
+  gradient_accumulation_steps: 4   # 4 × 8 GPUs × 4 accum = 128 effective batch
   use_amp: true
 
 logging:

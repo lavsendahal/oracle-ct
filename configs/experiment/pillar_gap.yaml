@@ -16,8 +16,8 @@ model:
   name: OracleCT_Pillar_GAP
   num_diseases: 30
   disease_names: null               # null = use first 30 from ALL_DISEASES
-  model_repo_id: "YalaLab/Pillar0-AbdomenCT"  # HuggingFace repo or local path
-  model_revision: null              # null = latest; set to specific revision/tag
+  model_repo_id: "/scratch/railabs/ld258/output/ct_triage/oracle-ct/pretrained_models/Pillar0-AbdomenCT"
+  model_revision: null
   freeze_backbone: false            # fine-tune backbone end-to-end
   modality: abdomen_ct
   use_gradient_checkpointing: true  # saves ~40% activation memory for large backbone

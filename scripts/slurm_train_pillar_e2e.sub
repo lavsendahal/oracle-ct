@@ -12,18 +12,19 @@
 # Fresh run:
 #   sbatch slurm_train_pillar_e2e.sub \
 #       experiment=pillar_masked_attn \
-#       dataset=merlin_pillar \
-#       model.model_repo_id=/path/to/pillar_model
+#       dataset=merlin_pillar
 #
 # Resume after preemption:
 #   sbatch slurm_train_pillar_e2e.sub \
 #       experiment=pillar_masked_attn \
 #       dataset=merlin_pillar \
-#       model.model_repo_id=/path/to/pillar_model \
 #       training.resume_from_checkpoint=/path/to/checkpoints/pillar_masked_attn_last.pt
 # ===========================================================================
 
 NGPUS=8
+
+# Dedicated local path where Pillar0-AbdomenCT was downloaded
+PILLAR_MODEL=/scratch/railabs/ld258/output/ct_triage/oracle-ct/pretrained_models/Pillar0-AbdomenCT
 
 module load miniconda/py39_4.12.0
 source "$(conda info --base)/etc/profile.d/conda.sh"
@@ -37,9 +38,18 @@ export HF_TOKEN=$HUGGINGFACE_HUB_TOKEN
 export HF_HOME=$SCRATCH/hf_home
 export HF_HUB_CACHE=$HF_HOME/hub
 
-# CPU threading: 32 cores / (8 GPUs x (1 main + 2 workers)) = ~1.3 → 2
-export OMP_NUM_THREADS=2
-export MKL_NUM_THREADS=2
+# Pre-seed the HF modules cache with Pillar's custom .py files BEFORE torchrun.
+# transformers bug: with local path + trust_remote_code=True it tries to resolve
+# relative imports from the modules cache before copying them there.
+# Doing this in bash (single process, before DDP) prevents the 8-way race.
+MODULES_CACHE=$HF_HOME/modules/transformers_modules/Pillar0-AbdomenCT
+mkdir -p $MODULES_CACHE
+cp $PILLAR_MODEL/*.py $MODULES_CACHE/
+echo "Seeded modules cache: $MODULES_CACHE"
+
+# CPU threading: 128 cores / (8 GPUs x (1 main + 2 workers)) = ~5 → 4
+export OMP_NUM_THREADS=4
+export MKL_NUM_THREADS=4
 
 # NCCL tuning for 8-GPU single-node NVLink/PCIe topology
 export NCCL_DEBUG=WARN
@@ -52,13 +62,10 @@ echo "========================================"
 echo "Job ID:    $SLURM_JOB_ID"
 echo "Node:      $(hostname -s)"
 echo "GPUs:      $NGPUS"
+echo "Model:     $PILLAR_MODEL"
 echo "Arguments: $@"
 echo "========================================"
 echo ""
-
-# Pre-download Pillar-0 weights on rank 0 before launching DDP.
-# Prevents N simultaneous HuggingFace downloads from 8 workers.
-python /home/ld258/ipredict/oracle-ct/oracle_ct/scripts/prefetch_hf_models.py "$@"
 
 torchrun \
     --standalone \
@@ -66,4 +73,5 @@ torchrun \
     --nproc_per_node=$NGPUS \
     /home/ld258/ipredict/oracle-ct/oracle_ct/train.py \
     training.use_ddp=true \
+    model.model_repo_id=$PILLAR_MODEL \
     "$@"
