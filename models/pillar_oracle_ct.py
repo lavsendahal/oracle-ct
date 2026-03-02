@@ -36,6 +36,7 @@ from typing import Dict, List, Optional, Any, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.checkpoint as grad_ckpt
 
 # ---------------------------------------------------------------------------
 # Add pillar-finetune to sys.path so MultimodalAtlas can be imported
@@ -212,6 +213,7 @@ class OracleCT_Pillar_GAP(nn.Module):
         model_revision: Optional[str] = None,
         freeze_backbone: bool = False,
         modality: str = "abdomen_ct",
+        use_gradient_checkpointing: bool = False,
     ):
         super().__init__()
 
@@ -219,6 +221,7 @@ class OracleCT_Pillar_GAP(nn.Module):
         self.disease_names = disease_names or get_all_diseases()[:num_diseases]
         self.modality = modality
         self.freeze_backbone = freeze_backbone
+        self.use_gradient_checkpointing = use_gradient_checkpointing and not freeze_backbone
 
         # Load Pillar backbone
         print(f"Loading Pillar backbone from: {model_repo_id}")
@@ -242,6 +245,7 @@ class OracleCT_Pillar_GAP(nn.Module):
         print(
             f"OracleCT_Pillar_GAP: {model_repo_id} → {self.hidden_dim}d pooled → "
             f"{num_diseases} diseases"
+            + (" [gradient checkpointing ON]" if self.use_gradient_checkpointing else "")
         )
 
     def train(self, mode: bool = True):
@@ -252,12 +256,16 @@ class OracleCT_Pillar_GAP(nn.Module):
 
     def forward(self, batch: Dict[str, Any]) -> torch.Tensor:
         image = batch["image"]   # [B, 11, 384, 384, 384]
-        B = image.size(0)
 
-        # Pillar forward
+        # Pillar forward (with optional gradient checkpointing to save activation memory)
         pillar_batch = {"anatomy": [self.modality]}
-        output = self.backbone(image, batch=pillar_batch)
-        pooled = output["pooled"]  # [B, 1152]
+        if self.use_gradient_checkpointing and self.training:
+            def _backbone_fwd(x):
+                return self.backbone(x, batch=pillar_batch)["pooled"]
+            pooled = grad_ckpt.checkpoint(_backbone_fwd, image, use_reentrant=False)
+        else:
+            pooled = self.backbone(image, batch=pillar_batch)["pooled"]
+        # pooled: [B, 1152]
 
         # Per-disease heads
         logits_list = []
@@ -297,6 +305,7 @@ class OracleCT_Pillar_MaskedAttn(nn.Module):
         use_mask_bias: bool = True,
         init_inside: float = 0.8,
         init_outside: float = 0.2,
+        use_gradient_checkpointing: bool = False,
     ):
         super().__init__()
 
@@ -304,6 +313,7 @@ class OracleCT_Pillar_MaskedAttn(nn.Module):
         self.disease_names = disease_names or get_all_diseases()[:num_diseases]
         self.modality = modality
         self.freeze_backbone = freeze_backbone
+        self.use_gradient_checkpointing = use_gradient_checkpointing and not freeze_backbone
         self.learn_tau = learn_tau
         self.fixed_tau = fixed_tau
         self.use_mask_bias = use_mask_bias
@@ -353,6 +363,7 @@ class OracleCT_Pillar_MaskedAttn(nn.Module):
         print(
             f"OracleCT_Pillar_MaskedAttn: {model_repo_id} → {self.hidden_dim}d activ "
             f"[64³] → 3D masked attn → {num_diseases} diseases"
+            + (" [gradient checkpointing ON]" if self.use_gradient_checkpointing else "")
         )
 
     def train(self, mode: bool = True):
@@ -370,10 +381,15 @@ class OracleCT_Pillar_MaskedAttn(nn.Module):
         B = image.size(0)
         device = image.device
 
-        # Pillar forward → spatial features
+        # Pillar forward → spatial features (with optional gradient checkpointing)
         pillar_batch = {"anatomy": [self.modality]}
-        output = self.backbone(image, batch=pillar_batch)
-        activ = output["activ"]  # [B, 1152, 64, 64, 64]
+        if self.use_gradient_checkpointing and self.training:
+            def _backbone_fwd(x):
+                return self.backbone(x, batch=pillar_batch)["activ"]
+            activ = grad_ckpt.checkpoint(_backbone_fwd, image, use_reentrant=False)
+        else:
+            activ = self.backbone(image, batch=pillar_batch)["activ"]
+        # activ: [B, 1152, 64, 64, 64]
 
         # Per-disease masked attention
         logits_list = []

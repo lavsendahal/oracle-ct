@@ -9,11 +9,19 @@
 # Organ masks from existing .pt packs (224×224×160) are resized online
 # to [64, 64, 64] for attention pooling — no repacking of masks needed.
 #
-# Train from pillar-pretrain/oracle-ct/:
-#   torchrun --nproc_per_node=4 train.py \
+# Train (8-GPU end-to-end fine-tune):
+#   torchrun --nproc_per_node=8 train.py \
 #     experiment=pillar_masked_attn \
 #     dataset=merlin_pillar \
+#     training.use_ddp=true \
 #     model.model_repo_id=/path/to/local/pillar_model
+#
+# Resume after preemption:
+#   torchrun --nproc_per_node=8 train.py \
+#     experiment=pillar_masked_attn \
+#     dataset=merlin_pillar \
+#     training.use_ddp=true \
+#     training.resume_from_checkpoint=/path/to/run/checkpoints/pillar_masked_attn_last.pt
 
 model:
   name: OracleCT_Pillar_MaskedAttn
@@ -28,6 +36,7 @@ model:
   use_mask_bias: true
   init_inside: 0.8
   init_outside: 0.2
+  use_gradient_checkpointing: true  # saves ~40% activation memory for large backbone
 
 training:
   max_epochs: 20

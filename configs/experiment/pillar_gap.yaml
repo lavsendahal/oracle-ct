@@ -20,6 +20,7 @@ model:
   model_revision: null              # null = latest; set to specific revision/tag
   freeze_backbone: false            # fine-tune backbone end-to-end
   modality: abdomen_ct
+  use_gradient_checkpointing: true  # saves ~40% activation memory for large backbone
 
 dataset:
   batch_size: 1                     # pillar-finetune uses batch_size=1 (384³ = 2.5 GB/sample)

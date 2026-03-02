@@ -344,6 +344,7 @@ def build_model(cfg: DictConfig) -> nn.Module:
             model_revision=cfg.model.get("model_revision", None),
             freeze_backbone=cfg.model.get("freeze_backbone", False),
             modality=cfg.model.get("modality", "abdomen_ct"),
+            use_gradient_checkpointing=cfg.model.get("use_gradient_checkpointing", False),
         )
     elif model_name == "OracleCT_Pillar_MaskedAttn":
         model = OracleCT_Pillar_MaskedAttn(
@@ -359,6 +360,7 @@ def build_model(cfg: DictConfig) -> nn.Module:
             use_mask_bias=cfg.model.get("use_mask_bias", True),
             init_inside=cfg.model.get("init_inside", 0.8),
             init_outside=cfg.model.get("init_outside", 0.2),
+            use_gradient_checkpointing=cfg.model.get("use_gradient_checkpointing", False),
         )
     else:
         raise ValueError(f"Unknown model: {model_name}")
@@ -944,6 +946,26 @@ def main(cfg: DictConfig):
     model = build_model(cfg)
     model = model.to(device)
 
+    # -------------------------------------------------------------------------
+    # Resume from checkpoint: load model weights BEFORE DDP wrapping so that
+    # DDP starts with the restored weights on all ranks.
+    # -------------------------------------------------------------------------
+    resume_path = cfg.training.get("resume_from_checkpoint", None)
+    resume_checkpoint = None  # will hold the full dict for optimizer/scheduler restore
+
+    if resume_path:
+        resume_path = Path(resume_path)
+        if not resume_path.exists():
+            raise FileNotFoundError(f"resume_from_checkpoint not found: {resume_path}")
+        if is_main_process():
+            print(f"\nResuming from checkpoint: {resume_path}")
+        # All ranks load so DDP doesn't need to broadcast
+        resume_checkpoint = torch.load(resume_path, map_location=device)
+        model.load_state_dict(resume_checkpoint["model_state_dict"])
+        if is_main_process():
+            resumed_epoch = resume_checkpoint.get("epoch", 0)
+            print(f"  Loaded model weights from epoch {resumed_epoch}")
+
     # Wrap model in DDP
     if use_ddp and dist.is_initialized():
         model = nn.parallel.DistributedDataParallel(
@@ -1143,6 +1165,32 @@ def main(cfg: DictConfig):
     else:
         scheduler = None
 
+    # -------------------------------------------------------------------------
+    # Restore optimizer / scheduler state and determine start_epoch
+    # -------------------------------------------------------------------------
+    start_epoch = 1
+    best_metric = -float("inf") if cfg.training.monitor_mode == "max" else float("inf")
+    best_epoch = 0
+
+    if resume_checkpoint is not None:
+        if resume_checkpoint.get("optimizer_state_dict") is not None:
+            optimizer.load_state_dict(resume_checkpoint["optimizer_state_dict"])
+            if is_main_process():
+                print("  Loaded optimizer state")
+        if scheduler is not None and resume_checkpoint.get("scheduler_state_dict") is not None:
+            scheduler.load_state_dict(resume_checkpoint["scheduler_state_dict"])
+            if is_main_process():
+                print("  Loaded scheduler state")
+        start_epoch = resume_checkpoint.get("epoch", 0) + 1
+        # Restore best metric so we don't overwrite a good checkpoint with a worse one
+        saved_best = resume_checkpoint.get("best_metric")
+        if saved_best is not None:
+            best_metric = saved_best
+            best_epoch = resume_checkpoint.get("epoch", 0)
+        if is_main_process():
+            print(f"  Resuming training from epoch {start_epoch}")
+            print(f"  Best {cfg.training.monitor_metric} so far: {best_metric:.4f}")
+
     # =========================================================================
     # Training loop
     # =========================================================================
@@ -1151,10 +1199,7 @@ def main(cfg: DictConfig):
         print("Starting training...")
         print("=" * 80 + "\n")
 
-    best_metric = -float("inf") if cfg.training.monitor_mode == "max" else float("inf")
-    best_epoch = 0
-
-    for epoch in range(1, cfg.training.max_epochs + 1):
+    for epoch in range(start_epoch, cfg.training.max_epochs + 1):
         # Set epoch for DistributedSampler (ensures different shuffle each epoch)
         if use_ddp and train_sampler is not None:
             train_sampler.set_epoch(epoch)
