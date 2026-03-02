@@ -1,0 +1,27 @@
+#!/bin/bash
+#SBATCH --job-name=pillar_linear
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
+#SBATCH --output=/home/ld258/ipredict/slurm_logs/oracle-ct/pillar_linear-output-%j.out
+#SBATCH --error=/home/ld258/ipredict/slurm_logs/oracle-ct/pillar_linear-error-%j.out
+
+module load miniconda/py39_4.12.0
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate fvlm
+
+export PYTHONPATH=/home/ld258/ipredict/oracle-ct:$PYTHONPATH
+
+FEATURES_DIR="/scratch/railabs/ld258/output/ct_triage/oracle-ct/pillar_features"
+OUTPUT_DIR="/scratch/railabs/ld258/output/ct_triage/oracle-ct/pillar_linear_probe"
+
+python /home/ld258/ipredict/oracle-ct/oracle_ct/linear_probing/train_linear_probe.py \
+    --features_dir ${FEATURES_DIR} \
+    --output_dir   ${OUTPUT_DIR} \
+    --epochs       100 \
+    --batch_size   256 \
+    --lr           1e-3 \
+    --weight_decay 1e-4 \
+    --device       cpu
+
+echo "Results saved to: ${OUTPUT_DIR}"

@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=repack_pillar384
 #SBATCH --nodes=1
-##SBATCH --nodelist=node001
-#SBATCH --cpus-per-task=64
+#SBATCH --nodelist=node003
+#SBATCH --cpus-per-task=32
 #SBATCH --output=/home/ld258/ipredict/slurm_logs/oracle-ct/repack_pillar384-output-%j.out
 #SBATCH --error=/home/ld258/ipredict/slurm_logs/oracle-ct/repack_pillar384-error-%j.out
 #SBATCH --mem=900G
@@ -44,7 +44,7 @@ echo "=== Step 2: Repacking to 384³ RAVE LZ4 ==="
 python ${ORACLE_CT_ROOT}/scripts/repack_pillar384.py \
     --nii_csv    ${NII_CSV} \
     --output_dir ${OUTPUT_DIR} \
-    --workers    48
+    --workers    24
 
 echo ""
 echo "=== Done. Packs saved to: ${OUTPUT_DIR} ==="

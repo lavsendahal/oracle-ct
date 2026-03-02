@@ -21,6 +21,12 @@ model:
   freeze_backbone: false            # fine-tune backbone end-to-end
   modality: abdomen_ct
 
+dataset:
+  batch_size: 1                     # pillar-finetune uses batch_size=1 (384³ = 2.5 GB/sample)
+  eval_batch_size: 1
+  num_workers: 2
+  prefetch_factor: 2
+
 training:
   max_epochs: 20
   learning_rate: 1e-4               # lower LR for large pretrained backbone
@@ -28,7 +34,7 @@ training:
   use_group_lrs: true
   head_lr_scale: 5.0                # heads learn faster than backbone
   alpha_lr_scale: 0.3
-  gradient_accumulation_steps: 4   # effective batch = 4 × N_gpus × accum
+  gradient_accumulation_steps: 1   # pillar-finetune: accumulate_grad_batches=1
   use_amp: true
 
 logging:

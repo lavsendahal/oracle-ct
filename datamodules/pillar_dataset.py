@@ -89,25 +89,17 @@ def apply_pillar_windows(volume_int16: torch.Tensor) -> torch.Tensor:
     # We add batch and channel dims: [1, 1, D, H, W]
     vol_5d = volume_int16.float().unsqueeze(0).unsqueeze(0)  # [1, 1, D, H, W]
 
-    # Apply 10 anatomical windows → output [1, 10, D, H, W]
+    # windows="all" for CT → 10 anatomical + minmax = 11 channels total
+    # This matches exactly what Pillar-0 was trained on (merlin_cache_1.5mm pipeline)
     windowed = rve.batch_apply_windowing_vectorized(
         vol_5d,
         windows="all",
         modality="CT",
         torch_operating_dtype=torch.float32,
         compute_stats_per_sample=True,
-    )  # [1, 10, D, H, W] in [0, 1]
+    )  # [1, 11, D, H, W] in [0, 1]
 
-    windowed = windowed.squeeze(0)  # [10, D, H, W]
-
-    # 11th channel: global min-max normalisation
-    vol_float = volume_int16.float()
-    vmin = vol_float.min()
-    vmax = vol_float.max()
-    minmax = (vol_float - vmin) / (vmax - vmin + 1e-8)  # [D, H, W] in [0, 1]
-
-    result = torch.cat([windowed, minmax.unsqueeze(0)], dim=0)  # [11, D, H, W]
-    return result.contiguous()
+    return windowed.squeeze(0).contiguous()  # [11, D, H, W]
 
 
 # =============================================================================

@@ -39,6 +39,10 @@ echo "Arguments: $@"
 echo "========================================"
 echo ""
 
+# Pre-download any HuggingFace models on rank 0 before launching DDP.
+# Prevents race condition where multiple ranks download the same files simultaneously.
+python /home/ld258/ipredict/oracle-ct/oracle_ct/scripts/prefetch_hf_models.py "$@"
+
 torchrun \
     --standalone \
     --nnodes=1 \
