@@ -57,14 +57,14 @@ from oracle_ct.models.resnet3d_oracle_ct import (
     OracleCT_ResNet3D_GAP, OracleCT_ResNet3D_UnaryAttnPool,
     OracleCT_ResNet3D_MaskedUnaryAttn, OracleCT_ResNet3D_MaskedUnaryAttnScalar)
 from oracle_ct.models.pillar_oracle_ct import (
-    OracleCT_Pillar_GAP, OracleCT_Pillar_MaskedAttn)
+    OracleCT_Pillar_GAP, OracleCT_Pillar_MaskedAttn, OracleCT_Pillar_MaskedAttnScalar)
 
 from oracle_ct.datamodules.dataset import JanusDataset, janus_collate_fn
 from oracle_ct.datamodules.pillar_dataset import PillarDataset, pillar_collate_fn
 from oracle_ct.configs.disease_config import get_all_diseases, load_config_globally
 
 # Models that use PillarDataset (11-channel 384³ input from RAVE LZ4 packs)
-_PILLAR_MODEL_NAMES = {"OracleCT_Pillar_GAP", "OracleCT_Pillar_MaskedAttn"}
+_PILLAR_MODEL_NAMES = {"OracleCT_Pillar_GAP", "OracleCT_Pillar_MaskedAttn", "OracleCT_Pillar_MaskedAttnScalar"}
 
 
 # =============================================================================
@@ -360,6 +360,24 @@ def build_model(cfg: DictConfig) -> nn.Module:
             use_mask_bias=cfg.model.get("use_mask_bias", True),
             init_inside=cfg.model.get("init_inside", 0.8),
             init_outside=cfg.model.get("init_outside", 0.2),
+            use_gradient_checkpointing=cfg.model.get("use_gradient_checkpointing", False),
+        )
+    elif model_name == "OracleCT_Pillar_MaskedAttnScalar":
+        model = OracleCT_Pillar_MaskedAttnScalar(
+            num_diseases=cfg.model.num_diseases,
+            disease_names=cfg.model.get("disease_names", None),
+            model_repo_id=cfg.model.get("model_repo_id", "YalaLab/Pillar0-AbdomenCT"),
+            model_revision=cfg.model.get("model_revision", None),
+            freeze_backbone=cfg.model.get("freeze_backbone", False),
+            modality=cfg.model.get("modality", "abdomen_ct"),
+            learn_tau=cfg.model.get("learn_tau", True),
+            init_tau=cfg.model.get("init_tau", 0.7),
+            fixed_tau=cfg.model.get("fixed_tau", 1.0),
+            use_mask_bias=cfg.model.get("use_mask_bias", True),
+            init_inside=cfg.model.get("init_inside", 0.8),
+            init_outside=cfg.model.get("init_outside", 0.2),
+            scalar_hidden=cfg.model.get("scalar_hidden", 256),
+            feature_stats_path=cfg.model.get("feature_stats_path", None),
             use_gradient_checkpointing=cfg.model.get("use_gradient_checkpointing", False),
         )
     else:
@@ -788,14 +806,26 @@ def main(cfg: DictConfig):
         print("\nBuilding datasets...")
 
     # Only load features for MaskedUnaryAttnScalar models
-    features_parquet = None
-    feature_columns = None
-    if cfg.model.name in [
+    _SCALAR_MODEL_NAMES = {
         "OracleCT_DINOv3_MaskedUnaryAttnScalar",
         "OracleCT_ResNet3D_MaskedUnaryAttnScalar",
-    ]:
+        "OracleCT_Pillar_MaskedAttnScalar",
+    }
+    features_parquet = None
+    feature_columns = None
+    if cfg.model.name in _SCALAR_MODEL_NAMES:
         features_parquet = cfg.paths.get("features_parquet")
         feature_columns = cfg.model.get("feature_columns")  # Optional: specific columns to use
+        if not features_parquet:
+            raise ValueError(
+                f"{cfg.model.name} requires paths.features_parquet but it is not set. "
+                "Pass it via: paths.features_parquet=/path/to/features_minimal.parquet"
+            )
+        if not cfg.paths.get("feature_stats"):
+            raise ValueError(
+                f"{cfg.model.name} requires paths.feature_stats but it is not set. "
+                "Pass it via: paths.feature_stats=/path/to/feature_stats.json"
+            )
 
     # Load disease config (must happen before get_all_diseases())
     disease_config_path = Path(__file__).parent / "configs" / "disease_config_oracle_ct.py"
@@ -1303,6 +1333,7 @@ def main(cfg: DictConfig):
                     "OracleCT_ResNet3D_MaskedUnaryAttnScalar": "resnet_masked_unary_attn_scalar",
                     "OracleCT_Pillar_GAP": "pillar_gap",
                     "OracleCT_Pillar_MaskedAttn": "pillar_masked_attn",
+                    "OracleCT_Pillar_MaskedAttnScalar": "pillar_masked_attn_scalar",
                 }
                 model_short = model_name_map.get(cfg.model.name, cfg.model.name.lower())
 

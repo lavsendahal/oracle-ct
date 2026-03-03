@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=pillar_e2e
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:a6000:8
-#SBATCH --cpus-per-task=128
+#SBATCH --gres=gpu:a6000:6
+#SBATCH --cpus-per-task=96
 #SBATCH --output=/home/ld258/ipredict/slurm_logs/oracle-ct/pillar_e2e-output-%j.out
 #SBATCH --error=/home/ld258/ipredict/slurm_logs/oracle-ct/pillar_e2e-error-%j.out
 
@@ -21,7 +21,7 @@
 #       training.resume_from_checkpoint=/path/to/checkpoints/pillar_masked_attn_last.pt
 # ===========================================================================
 
-NGPUS=8
+NGPUS=6
 
 # Dedicated local path where Pillar0-AbdomenCT was downloaded
 PILLAR_MODEL=/scratch/railabs/ld258/output/ct_triage/oracle-ct/pretrained_models/Pillar0-AbdomenCT
@@ -47,7 +47,7 @@ mkdir -p $MODULES_CACHE
 cp $PILLAR_MODEL/*.py $MODULES_CACHE/
 echo "Seeded modules cache: $MODULES_CACHE"
 
-# CPU threading: 128 cores / (8 GPUs x (1 main + 2 workers)) = ~5 → 4
+# CPU threading: 96 cores / (6 GPUs x (1 main + 4 workers)) = ~3 → 4
 export OMP_NUM_THREADS=4
 export MKL_NUM_THREADS=4
 

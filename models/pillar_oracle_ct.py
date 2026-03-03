@@ -15,9 +15,11 @@
 """
 Pillar-0 foundation model variants for OracleCT.
 
-Two model variants:
-1. OracleCT_Pillar_GAP:       Pillar-0 + Global Average Pooling (baseline)
-2. OracleCT_Pillar_MaskedAttn: Pillar-0 + 3D Organ-Masked Attention
+Four model variants:
+1. OracleCT_Pillar_GAP:              Pillar-0 + Global Average Pooling (baseline)
+2. OracleCT_Pillar_UnaryAttnPool:    Pillar-0 + Learned Full-Volume Attention (no organ mask)
+3. OracleCT_Pillar_MaskedAttn:       Pillar-0 + 3D Organ-Masked Attention
+4. OracleCT_Pillar_MaskedAttnScalar: Pillar-0 + 3D Masked Attention + Scalar Fusion
 
 Pillar-0 is a 3D vision-language foundation model pretrained on abdominal CT.
 Input: [B, 11, 384, 384, 384] — 11 HU windows (10 anatomical + minmax)
@@ -28,8 +30,9 @@ Outputs:
 Option B: apply 11 windows at load time, keep pretrained weights unchanged.
 """
 
-import sys
+import json
 import math
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 
@@ -64,6 +67,7 @@ from ..configs.disease_config import (
     get_all_diseases,
     get_all_disease_configs,
 )
+from ..configs.disease_config_oracle_ct import DISEASE_CONFIGS as ORACLE_SCALAR_CONFIGS
 from .dinov3_oracle_ct import (
     to_logit,
     inv_sigmoid_temp,
@@ -420,6 +424,199 @@ class OracleCT_Pillar_MaskedAttn(nn.Module):
                 logit = torch.where(
                     torch.isnan(logit), torch.zeros_like(logit), logit
                 )
+            logits_list.append(logit)
+
+        return torch.cat(logits_list, dim=1)  # [B, num_diseases]
+
+
+# =============================================================================
+# MODEL 3: PILLAR 3D MASKED ATTENTION + SCALAR FUSION
+# =============================================================================
+
+class OracleCT_Pillar_MaskedAttnScalar(nn.Module):
+    """
+    Pillar-0 + 3D Organ-Masked Attention + Scalar Feature Fusion.
+
+    Extends OracleCT_Pillar_MaskedAttn with per-disease scalar fusion:
+      visual [B, 1152] + scalars [B, S]
+        → cat [B, 1152+S] → LayerNorm → Linear(→ scalar_hidden) → ReLU → Linear(→ 1)
+
+    Scalars from the oracle-ct minimal parquet (mean_hu, to_body_ratio, touches_border
+    per disease's primary organ). S=0 for global-strategy diseases → visual-only head.
+    """
+
+    def __init__(
+        self,
+        num_diseases: int = 30,
+        disease_names: Optional[List[str]] = None,
+        model_repo_id: str = DEFAULT_REPO_ID,
+        model_revision: Optional[str] = None,
+        freeze_backbone: bool = False,
+        modality: str = "abdomen_ct",
+        learn_tau: bool = True,
+        init_tau: float = 0.7,
+        fixed_tau: float = 1.0,
+        use_mask_bias: bool = True,
+        init_inside: float = 0.8,
+        init_outside: float = 0.2,
+        scalar_hidden: int = 256,
+        feature_stats_path: Optional[str] = None,
+        use_gradient_checkpointing: bool = False,
+    ):
+        super().__init__()
+
+        self.num_diseases = num_diseases
+        self.disease_names = disease_names or get_all_diseases()[:num_diseases]
+        self.modality = modality
+        self.freeze_backbone = freeze_backbone
+        self.use_gradient_checkpointing = use_gradient_checkpointing and not freeze_backbone
+        self.learn_tau = learn_tau
+        self.fixed_tau = fixed_tau
+        self.use_mask_bias = use_mask_bias
+
+        # Feature stats for z-score normalisation
+        if not feature_stats_path:
+            raise ValueError("feature_stats_path is required for OracleCT_Pillar_MaskedAttnScalar")
+        if not Path(feature_stats_path).exists():
+            raise FileNotFoundError(f"feature_stats not found: {feature_stats_path}")
+        with open(feature_stats_path) as f:
+            self._feature_stats: Dict[str, Dict[str, float]] = json.load(f)
+
+        # Load Pillar backbone
+        print(f"Loading Pillar backbone from: {model_repo_id}")
+        self.backbone = _build_pillar_backbone(model_repo_id, model_revision)
+        self.hidden_dim = self.backbone.hidden_dim  # 1152
+
+        if freeze_backbone:
+            for p in self.backbone.parameters():
+                p.requires_grad = False
+            self.backbone.eval()
+        else:
+            self.backbone.train()
+
+        # Per-disease modules
+        self.score_convs  = nn.ModuleDict()
+        self.heads        = nn.ModuleDict()
+
+        if use_mask_bias:
+            self.inside_logit  = nn.ParameterDict()
+            self.outside_logit = nn.ParameterDict()
+        if learn_tau:
+            self.temp_logit = nn.ParameterDict()
+
+        for disease in self.disease_names:
+            # 3D attention scorer (1×1×1 conv, same as MaskedAttn)
+            self.score_convs[disease] = nn.Conv3d(self.hidden_dim, 1, kernel_size=1)
+
+            if use_mask_bias:
+                self.inside_logit[disease]  = nn.Parameter(torch.tensor(to_logit(init_inside)))
+                self.outside_logit[disease] = nn.Parameter(torch.tensor(to_logit(init_outside)))
+            if learn_tau:
+                self.temp_logit[disease] = nn.Parameter(torch.tensor(inv_sigmoid_temp(init_tau)))
+
+            # Fusion head: visual [1152] + scalars [S] → LayerNorm → MLP → 1
+            config = ORACLE_SCALAR_CONFIGS.get(disease)
+            num_scalars = len(config.scalar_features) if config else 0
+            fusion_dim = self.hidden_dim + num_scalars
+            self.heads[disease] = nn.Sequential(
+                nn.LayerNorm(fusion_dim),
+                nn.Linear(fusion_dim, scalar_hidden),
+                nn.ReLU(inplace=True),
+                nn.Linear(scalar_hidden, 1),
+            )
+
+        print(
+            f"OracleCT_Pillar_MaskedAttnScalar: {model_repo_id} → {self.hidden_dim}d activ "
+            f"[64³] → 3D masked attn + scalars → {scalar_hidden}d → {num_diseases} diseases"
+            + (" [gradient checkpointing ON]" if self.use_gradient_checkpointing else "")
+        )
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if self.freeze_backbone:
+            self.backbone.eval()
+        return self
+
+    def _get_scalars(self, disease: str, features_row, device: torch.device) -> torch.Tensor:
+        """Look up parquet features for this disease and z-score normalize."""
+        config = ORACLE_SCALAR_CONFIGS.get(disease)
+        feature_names = config.scalar_features if config else []
+        if not feature_names:
+            return torch.empty(0, device=device)  # global disease — no scalars
+        if features_row is None:
+            raise RuntimeError(
+                f"OracleCT_Pillar_MaskedAttnScalar requires features_parquet but "
+                f"features_row is None for disease '{disease}'."
+            )
+        values = []
+        for name in feature_names:
+            try:
+                val = float(features_row.get(name, float("nan")))
+            except (TypeError, ValueError):
+                val = float("nan")
+            if math.isnan(val):
+                val = 0.0  # mean-impute (mean = 0 in z-score space)
+            else:
+                s = self._feature_stats.get(name, {})
+                std = s.get("std", 1.0) or 1.0
+                val = (val - s.get("mean", 0.0)) / std
+            values.append(val)
+        return torch.tensor(values, dtype=torch.float32, device=device)
+
+    def forward(self, batch: Dict[str, Any]) -> torch.Tensor:
+        image         = batch["image"]           # [B, 11, 384, 384, 384]
+        masks         = batch["masks"]           # [B, 20, D_mask, H_mask, W_mask]
+        features_rows = batch.get("features_row", [None] * image.size(0))
+        disease_rois  = batch.get("disease_rois", [{}] * image.size(0))
+        meta          = batch.get("meta", [{}] * image.size(0))
+
+        B      = image.size(0)
+        device = image.device
+
+        # Pillar forward → spatial features (with optional gradient checkpointing)
+        pillar_batch = {"anatomy": [self.modality]}
+        if self.use_gradient_checkpointing and self.training:
+            def _backbone_fwd(x):
+                return self.backbone(x, batch=pillar_batch)["activ"]
+            activ = grad_ckpt.checkpoint(_backbone_fwd, image, use_reentrant=False)
+        else:
+            activ = self.backbone(image, batch=pillar_batch)["activ"]
+        # activ: [B, 1152, 64, 64, 64]
+
+        logits_list = []
+        for disease in self.disease_names:
+            attn_mask = get_attention_mask_for_disease(
+                disease, masks, disease_rois, meta, device,
+                allow_comparative=False,
+            )
+
+            bias_in  = self.inside_logit[disease]  if self.use_mask_bias else None
+            bias_out = self.outside_logit[disease] if self.use_mask_bias else None
+            tau = (
+                0.2 + 1.8 * torch.sigmoid(self.temp_logit[disease])
+                if self.learn_tau else self.fixed_tau
+            )
+
+            # 3D masked attention pooling → [B, 1152]
+            visual = masked_attention_pool_3d(
+                activ, attn_mask, self.score_convs[disease],
+                tau=tau, bias_in=bias_in, bias_out=bias_out,
+            )
+
+            # Scalar features → [B, S] (S=0 for global diseases)
+            scalars_list = [
+                self._get_scalars(disease, features_rows[b], device)
+                for b in range(B)
+            ]
+            if scalars_list[0].numel() > 0:
+                scalars = torch.stack(scalars_list, dim=0)  # [B, S]
+                fused   = torch.cat([visual, scalars], dim=1)  # [B, 1152+S]
+            else:
+                fused = visual  # [B, 1152] — no scalars for this disease
+
+            logit = self.heads[disease](fused)  # [B, 1]
+            if torch.isnan(logit).any():
+                logit = torch.where(torch.isnan(logit), torch.zeros_like(logit), logit)
             logits_list.append(logit)
 
         return torch.cat(logits_list, dim=1)  # [B, num_diseases]

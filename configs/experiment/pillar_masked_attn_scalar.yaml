@@ -1,0 +1,61 @@
+# @package _global_
+
+# Pillar-0 + 3D Organ-Masked Attention + Scalar Feature Fusion
+#
+# Extends pillar_masked_attn with scalar fusion (TriageNet-style):
+#   visual [B, 1152] + scalars [B, S] → cat → LayerNorm → Linear(→ scalar_hidden) → ReLU → Linear(→ 1)
+#
+# Scalars: mean_hu + to_body_ratio + touches_border per organ (from feature_stats.json)
+# Global diseases (no organ anchor): scalar branch is skipped, falls back to linear head.
+#
+# Fresh run:
+#   sbatch slurm_train_pillar_e2e.sub \
+#     experiment=pillar_masked_attn_scalar dataset=merlin_pillar \
+#     paths.features_parquet=/path/to/features_minimal.parquet \
+#     paths.feature_stats=/path/to/feature_stats.json
+#
+# Resume after preemption:
+#   sbatch slurm_train_pillar_e2e.sub \
+#     experiment=pillar_masked_attn_scalar dataset=merlin_pillar \
+#     paths.features_parquet=/path/to/features_minimal.parquet \
+#     paths.feature_stats=/path/to/feature_stats.json \
+#     training.resume_from_checkpoint=/path/to/checkpoints/pillar_masked_attn_scalar_last.pt
+
+model:
+  name: OracleCT_Pillar_MaskedAttnScalar
+  num_diseases: 30
+  disease_names: null               # null = use first 30 from ALL_DISEASES
+  model_repo_id: "/scratch/railabs/ld258/output/ct_triage/oracle-ct/pretrained_models/Pillar0-AbdomenCT"
+  model_revision: null
+  freeze_backbone: false            # fine-tune backbone end-to-end
+  modality: abdomen_ct
+  learn_tau: true
+  init_tau: 0.7
+  use_mask_bias: true
+  init_inside: 0.8
+  init_outside: 0.2
+  scalar_hidden: 256                # fusion MLP hidden dim
+  feature_stats_path: ${paths.feature_stats}   # z-score stats JSON (REQUIRED)
+  use_gradient_checkpointing: true  # saves ~40% activation memory for large backbone
+
+# paths.features_parquet and paths.feature_stats must be set at launch:
+#   paths.features_parquet=/path/to/features_minimal.parquet  ← per-case scalar rows
+#   paths.feature_stats=/path/to/feature_stats.json           ← z-score mean/std per feature
+
+dataset:
+  batch_size: 1
+  num_workers: 4
+  prefetch_factor: 2
+
+training:
+  max_epochs: 20
+  learning_rate: 1e-4
+  warmup_epochs: 2
+  use_group_lrs: true
+  head_lr_scale: 5.0                # score_convs + fusion heads learn faster
+  alpha_lr_scale: 0.3               # temperature + bias params slower
+  gradient_accumulation_steps: 4
+  use_amp: true
+
+logging:
+  use_wandb: false

@@ -40,7 +40,7 @@ dataset:
   #   ~20 GB fixed overhead → ~28 GB for batch → batch_size=4 safe, try 6 if no OOM.
   # Effective batch = 4 × 8 GPUs × 4 accum = 128.
   batch_size: 1
-  num_workers: 2
+  num_workers: 4
   prefetch_factor: 2
 
 training:

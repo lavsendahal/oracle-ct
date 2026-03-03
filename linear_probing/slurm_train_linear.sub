@@ -18,7 +18,7 @@ OUTPUT_DIR="/scratch/railabs/ld258/output/ct_triage/oracle-ct/pillar_linear_prob
 python /home/ld258/ipredict/oracle-ct/oracle_ct/linear_probing/train_linear_probe.py \
     --features_dir ${FEATURES_DIR} \
     --output_dir   ${OUTPUT_DIR} \
-    --epochs       100 \
+    --epochs       10000 \
     --batch_size   256 \
     --lr           1e-3 \
     --weight_decay 1e-4 \
