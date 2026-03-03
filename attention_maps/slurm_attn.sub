@@ -1,0 +1,39 @@
+#!/bin/bash
+#SBATCH --job-name=attn_viz
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:a6000:1
+#SBATCH --cpus-per-task=8
+#SBATCH --output=/home/ld258/ipredict/slurm_logs/oracle-ct/attn_viz-output-%j.out
+#SBATCH --error=/home/ld258/ipredict/slurm_logs/oracle-ct/attn_viz-error-%j.out
+
+# ===========================================================================
+# Attention Map Visualization
+#
+# Edit config.py to select model, checkpoint, cases, and diseases.
+# Then submit:
+#   sbatch slurm_attn.sub
+# ===========================================================================
+
+module load miniconda/py39_4.12.0
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate fvlm
+export PYTHONPATH=/home/ld258/ipredict/oracle-ct:$PYTHONPATH
+
+export HF_TOKEN=$HUGGINGFACE_HUB_TOKEN
+export HF_HOME=$SCRATCH/hf_home
+export HF_HUB_CACHE=$HF_HOME/hub
+
+# Pre-seed Pillar modules cache (needed if MODEL = "pillar")
+PILLAR_MODEL=/scratch/railabs/ld258/output/ct_triage/oracle-ct/pretrained_models/Pillar0-AbdomenCT
+MODULES_CACHE=$HF_HOME/modules/transformers_modules/Pillar0-AbdomenCT
+mkdir -p $MODULES_CACHE
+cp $PILLAR_MODEL/*.py $MODULES_CACHE/ 2>/dev/null || true
+
+echo "========================================"
+echo "Attention Map Visualization"
+echo "========================================"
+echo "Job ID: $SLURM_JOB_ID"
+echo "Node:   $(hostname -s)"
+echo "========================================"
+
+python /home/ld258/ipredict/oracle-ct/oracle_ct/attention_maps/run_attention.py

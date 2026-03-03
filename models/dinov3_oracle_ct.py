@@ -166,7 +166,8 @@ def masked_attention_pool(
     tau: Union[float, torch.Tensor] = 1.0,
     bias_in: Optional[torch.Tensor] = None,   # Learnable prior for inside mask
     bias_out: Optional[torch.Tensor] = None,  # Learnable prior for outside mask
-) -> torch.Tensor:
+    return_weights: bool = False,             # If True, also return weights [B, T, N]
+) -> Union[torch.Tensor, tuple]:
     """
     Content-aware attention restricted to mask with learnable priors.
 
@@ -249,7 +250,44 @@ def masked_attention_pool(
     if torch.isnan(pooled).any():
         pooled = torch.where(torch.isnan(pooled), torch.zeros_like(pooled), pooled)
 
+    if return_weights:
+        return pooled, weights  # weights: [B, T, N]
     return pooled
+
+
+def _inflate_tri_to_vol(
+    weights: torch.Tensor,   # [B, T, N]  attention weights over tokens per TRI frame
+    D: int,                  # depth of original CT volume
+    H: int,                  # height of original CT volume
+    W: int,                  # width of original CT volume
+    stride: int = 1,
+) -> torch.Tensor:           # [B, 1, D, H, W]
+    """
+    Reconstruct a 3D attention volume from per-TRI-frame token weights.
+
+    Each TRI frame's weights are placed back at their source axial center slice,
+    producing a sparse [B, 1, D, gh, gh] volume which is then trilinearly
+    upsampled to the full input resolution [B, 1, D, H, W].
+
+    Mirrors TriageNet's _inflate_tri_to_vol static method.
+    """
+    B, T, N = weights.shape
+    gh = int(math.sqrt(N))
+
+    # Centers used when building TRI slices (must match make_trislices)
+    centers = list(range(1, max(2, D - 1), stride))
+    if not centers:
+        centers = [D // 2]
+
+    # Place each frame's weights at its axial center
+    w_grid = weights.view(B, T, 1, gh, gh)          # [B, T, 1, gh, gh]
+    vol = torch.zeros(B, 1, D, gh, gh, device=weights.device, dtype=weights.dtype)
+    for t, c in enumerate(centers[:T]):
+        vol[:, :, c] = w_grid[:, t]                 # [B, 1, gh, gh]
+
+    # Trilinear upsample to full input resolution
+    vol = F.interpolate(vol, size=(D, H, W), mode="trilinear", align_corners=False)
+    return vol  # [B, 1, D, H, W]
 
 
 def create_roi_mask(
@@ -716,6 +754,7 @@ class OracleCT_DINOv3_MaskedUnaryAttn(nn.Module):
         init_outside: float = 0.2,
         use_gradient_checkpointing: bool = False,
         allow_comparative: bool = False,
+        return_attn: bool = False,
     ):
         super().__init__()
 
@@ -729,6 +768,7 @@ class OracleCT_DINOv3_MaskedUnaryAttn(nn.Module):
         self.use_mask_bias = use_mask_bias
         self.variant = variant.upper()
         self.allow_comparative = allow_comparative
+        self.return_attn = return_attn
 
         # Get DINOv3 model ID from variant
         if self.variant not in DINOV3_HF_IDS:
@@ -819,19 +859,19 @@ class OracleCT_DINOv3_MaskedUnaryAttn(nn.Module):
 
     
 
-    def forward(self, batch: Dict[str, Any]) -> torch.Tensor:
+    def forward(self, batch: Dict[str, Any]) -> Union[torch.Tensor, Dict[str, Any]]:
         image = batch["image"]  # [B, 1, X, Y, Z] in RAS orientation
         masks = batch["masks"]  # [B, 20, X, Y, Z] in RAS orientation
         disease_rois = batch.get("disease_rois", [{}] * image.size(0))
         meta = batch.get("meta", [{}] * image.size(0))
-        
+
         B, _, D, H, W = image.shape
         device = image.device
-        
+
         # Convert to TRI-slices
         tri = make_trislices(image, self.tri_stride)
         T = tri.size(1)
-        
+
         # Resize and normalize
         tri = F.interpolate(
             tri.view(B * T, 3, H, W),
@@ -855,6 +895,7 @@ class OracleCT_DINOv3_MaskedUnaryAttn(nn.Module):
 
         # Per-disease attention
         logits_list = []
+        attn_maps: Optional[Dict[str, torch.Tensor]] = {} if self.return_attn else None
 
         for disease in self.disease_names:
             attn_mask = get_attention_mask_for_disease(
@@ -866,7 +907,6 @@ class OracleCT_DINOv3_MaskedUnaryAttn(nn.Module):
 
             # Get temperature for this disease
             if self.learn_tau:
-                # Map temp_logit to [0.2, 2.0] range via sigmoid: tau = 0.2 + 1.8 * sigmoid(logit)
                 tau = 0.2 + 1.8 * torch.sigmoid(self.temp_logit[disease])
             else:
                 tau = self.fixed_tau
@@ -874,23 +914,19 @@ class OracleCT_DINOv3_MaskedUnaryAttn(nn.Module):
             # Check if comparative (list of masks) or single mask
             if isinstance(attn_mask, list):
                 # COMPARATIVE: Pool each organ separately and concatenate
+                # Attention maps not returned for comparative diseases (multi-stream)
                 pooled_organs = []
                 for organ_mask in attn_mask:
-                    # Convert to TRI-slice and resize
                     mask_tri = masks_3d_to_tri(organ_mask, self.tri_stride)
                     mask_tri = F.interpolate(
                         mask_tri.view(B * T, 1, H, W),
                         size=(self.image_size, self.image_size), mode="nearest"
                     ).view(B, T, self.image_size, self.image_size)
-
-                    # Masked attention pooling for this organ WITH learnable priors
                     organ_pooled = masked_attention_pool(
                         tokens, mask_tri, self.score_mlps[disease],
-                        tau=tau, bias_in=bias_in, bias_out=bias_out
+                        tau=tau, bias_in=bias_in, bias_out=bias_out,
                     )
                     pooled_organs.append(organ_pooled)
-
-                # Concatenate organ features: [liver_vec, spleen_vec] → [B, 2*hidden_dim]
                 pooled = torch.cat(pooled_organs, dim=1)
             else:
                 # SINGLE/UNION/ROI: Pool once with merged mask
@@ -900,23 +936,25 @@ class OracleCT_DINOv3_MaskedUnaryAttn(nn.Module):
                     size=(self.image_size, self.image_size), mode="nearest"
                 ).view(B, T, self.image_size, self.image_size)
 
-                # Masked attention pooling WITH learnable priors
-                pooled = masked_attention_pool(
+                pool_out = masked_attention_pool(
                     tokens, mask_tri, self.score_mlps[disease],
-                    tau=tau, bias_in=bias_in, bias_out=bias_out
+                    tau=tau, bias_in=bias_in, bias_out=bias_out,
+                    return_weights=self.return_attn,
                 )
+                if self.return_attn:
+                    pooled, w = pool_out  # w: [B, T, N]
+                    attn_maps[disease] = _inflate_tri_to_vol(w, D, H, W, self.tri_stride)
+                else:
+                    pooled = pool_out
 
-            # Classification head (handles both single and concatenated features)
             logit = self.heads[disease](pooled)  # [B, 1]
-
-            # Safety: replace NaN logits with zeros (should never happen after pooling fix)
             if torch.isnan(logit).any():
                 logit = torch.where(torch.isnan(logit), torch.zeros_like(logit), logit)
-
             logits_list.append(logit)
 
         logits = torch.cat(logits_list, dim=1)  # [B, num_diseases]
-
+        if self.return_attn:
+            return {"logits": logits, "attn": attn_maps}
         return logits
 
 

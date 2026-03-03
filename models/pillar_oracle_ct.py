@@ -93,7 +93,8 @@ def masked_attention_pool_3d(
     tau: Union[float, torch.Tensor] = 1.0,
     bias_in: Optional[torch.Tensor] = None,   # learnable prior for inside mask
     bias_out: Optional[torch.Tensor] = None,  # learnable prior for outside mask
-) -> torch.Tensor:                   # [B, C]
+    return_weights: bool = False,    # if True, also return weight map [B,1,D',H',W']
+) -> Union[torch.Tensor, tuple]:     # [B, C] or ([B, C], [B, 1, D', H', W'])
     """
     Content-aware attention restricted to organ mask with learnable priors.
 
@@ -102,6 +103,11 @@ def masked_attention_pool_3d(
 
     The organ mask at original resolution is resized to match the feature map
     spatial dims using nearest-neighbour interpolation.
+
+    Args:
+        return_weights: If True, returns (pooled, weight_map) where weight_map
+            is [B, 1, D', H', W'] — the spatial attention distribution at feature
+            map resolution. Upsample to input resolution for visualization.
     """
     B, C, Df, Hf, Wf = feat_map.shape
     N = Df * Hf * Wf
@@ -158,6 +164,9 @@ def masked_attention_pool_3d(
     if torch.isnan(pooled).any():
         pooled = torch.where(torch.isnan(pooled), torch.zeros_like(pooled), pooled)
 
+    if return_weights:
+        weight_map = weights.view(B, 1, Df, Hf, Wf)  # [B, 1, D', H', W']
+        return pooled, weight_map
     return pooled
 
 
@@ -424,6 +433,7 @@ class OracleCT_Pillar_MaskedAttn(nn.Module):
         init_inside: float = 0.8,
         init_outside: float = 0.2,
         use_gradient_checkpointing: bool = False,
+        return_attn: bool = False,
     ):
         super().__init__()
 
@@ -435,6 +445,7 @@ class OracleCT_Pillar_MaskedAttn(nn.Module):
         self.learn_tau = learn_tau
         self.fixed_tau = fixed_tau
         self.use_mask_bias = use_mask_bias
+        self.return_attn = return_attn
 
         # Load Pillar backbone
         print(f"Loading Pillar backbone from: {model_repo_id}")
@@ -490,13 +501,13 @@ class OracleCT_Pillar_MaskedAttn(nn.Module):
             self.backbone.eval()
         return self
 
-    def forward(self, batch: Dict[str, Any]) -> torch.Tensor:
+    def forward(self, batch: Dict[str, Any]) -> Union[torch.Tensor, Dict[str, Any]]:
         image = batch["image"]   # [B, 11, 384, 384, 384]
         masks = batch["masks"]   # [B, 20, D_mask, H_mask, W_mask] (original resolution)
         disease_rois = batch.get("disease_rois", [{}] * image.size(0))
         meta = batch.get("meta", [{}] * image.size(0))
 
-        B = image.size(0)
+        B, _, D, H, W = image.shape
         device = image.device
 
         # Pillar forward → spatial features (with optional gradient checkpointing)
@@ -511,6 +522,8 @@ class OracleCT_Pillar_MaskedAttn(nn.Module):
 
         # Per-disease masked attention
         logits_list = []
+        attn_maps: Optional[Dict[str, torch.Tensor]] = {} if self.return_attn else None
+
         for disease in self.disease_names:
             # Get organ mask (handles all strategies: single/union/roi/global)
             attn_mask = get_attention_mask_for_disease(
@@ -528,10 +541,20 @@ class OracleCT_Pillar_MaskedAttn(nn.Module):
             )
 
             # Pool spatial features using organ mask
-            pooled = masked_attention_pool_3d(
+            pool_out = masked_attention_pool_3d(
                 activ, attn_mask, self.score_convs[disease],
                 tau=tau, bias_in=bias_in, bias_out=bias_out,
-            )  # [B, 1152]
+                return_weights=self.return_attn,
+            )
+            if self.return_attn:
+                pooled, weight_map = pool_out  # weight_map: [B, 1, 64, 64, 64]
+                # Upsample to input resolution for visualization
+                attn_maps[disease] = F.interpolate(
+                    weight_map.float(), size=(D, H, W),
+                    mode="trilinear", align_corners=False,
+                )  # [B, 1, D, H, W]
+            else:
+                pooled = pool_out  # [B, 1152]
 
             logit = self.heads[disease](pooled)  # [B, 1]
             if torch.isnan(logit).any():
@@ -540,7 +563,10 @@ class OracleCT_Pillar_MaskedAttn(nn.Module):
                 )
             logits_list.append(logit)
 
-        return torch.cat(logits_list, dim=1)  # [B, num_diseases]
+        logits = torch.cat(logits_list, dim=1)  # [B, num_diseases]
+        if self.return_attn:
+            return {"logits": logits, "attn": attn_maps}
+        return logits
 
 
 # =============================================================================
