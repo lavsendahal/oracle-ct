@@ -1,0 +1,46 @@
+# @package _global_
+
+# Pillar-0 + Learned Full-Volume Attention Pooling (no organ masking)
+#
+# Intermediate between pillar_gap (uniform pooling) and pillar_masked_attn (organ-masked).
+# Each disease has its own learned Conv3d(1152, 1, 1) scorer attending over the full
+# 3D spatial feature map [B, 1152, 64, 64, 64] — no organ masks or parquet needed.
+#
+# Fresh run:
+#   sbatch slurm_train_pillar_e2e.sub \
+#     experiment=pillar_unary_attn dataset=merlin_pillar
+#
+# Resume after preemption:
+#   sbatch slurm_train_pillar_e2e.sub \
+#     experiment=pillar_unary_attn dataset=merlin_pillar \
+#     training.resume_from_checkpoint=/path/to/checkpoints/pillar_unary_attn_pool_last.pt
+
+model:
+  name: OracleCT_Pillar_UnaryAttnPool
+  num_diseases: 30
+  disease_names: null               # null = use first 30 from ALL_DISEASES
+  model_repo_id: "/scratch/railabs/ld258/output/ct_triage/oracle-ct/pretrained_models/Pillar0-AbdomenCT"
+  model_revision: null
+  freeze_backbone: false
+  modality: abdomen_ct
+  learn_tau: true
+  init_tau: 0.7
+  use_gradient_checkpointing: true
+
+dataset:
+  batch_size: 1
+  num_workers: 4
+  prefetch_factor: 2
+
+training:
+  max_epochs: 20
+  learning_rate: 1e-4
+  warmup_epochs: 2
+  use_group_lrs: true
+  head_lr_scale: 5.0
+  alpha_lr_scale: 0.3
+  gradient_accumulation_steps: 4
+  use_amp: true
+
+logging:
+  use_wandb: false

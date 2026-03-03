@@ -281,7 +281,121 @@ class OracleCT_Pillar_GAP(nn.Module):
 
 
 # =============================================================================
-# MODEL 2: PILLAR 3D MASKED ATTENTION
+# MODEL 2: PILLAR UNARY ATTENTION POOLING (full-volume, no organ mask)
+# =============================================================================
+
+class OracleCT_Pillar_UnaryAttnPool(nn.Module):
+    """
+    Pillar-0 + Learned Full-Volume 3D Attention Pooling (no organ masking).
+
+    Intermediate between GAP (uniform pooling) and MaskedAttn (organ-masked).
+    Each disease has its own learned Conv3d(1152, 1, 1) scorer attending over
+    the full 3D spatial feature map [B, 1152, 64, 64, 64].
+
+    No organ masks or parquet features required — simpler data pipeline than MaskedAttn.
+    """
+
+    def __init__(
+        self,
+        num_diseases: int = 30,
+        disease_names: Optional[List[str]] = None,
+        model_repo_id: str = DEFAULT_REPO_ID,
+        model_revision: Optional[str] = None,
+        freeze_backbone: bool = False,
+        modality: str = "abdomen_ct",
+        learn_tau: bool = True,
+        init_tau: float = 0.7,
+        fixed_tau: float = 1.0,
+        use_gradient_checkpointing: bool = False,
+    ):
+        super().__init__()
+
+        self.num_diseases = num_diseases
+        self.disease_names = disease_names or get_all_diseases()[:num_diseases]
+        self.modality = modality
+        self.freeze_backbone = freeze_backbone
+        self.use_gradient_checkpointing = use_gradient_checkpointing and not freeze_backbone
+        self.learn_tau = learn_tau
+        self.fixed_tau = fixed_tau
+
+        # Load Pillar backbone
+        print(f"Loading Pillar backbone from: {model_repo_id}")
+        self.backbone = _build_pillar_backbone(model_repo_id, model_revision)
+        self.hidden_dim = self.backbone.hidden_dim  # 1152
+
+        if freeze_backbone:
+            for p in self.backbone.parameters():
+                p.requires_grad = False
+            self.backbone.eval()
+        else:
+            self.backbone.train()
+
+        # Per-disease modules
+        self.score_convs = nn.ModuleDict()
+        self.heads = nn.ModuleDict()
+        if learn_tau:
+            self.temp_logit = nn.ParameterDict()
+
+        for disease in self.disease_names:
+            self.score_convs[disease] = nn.Conv3d(self.hidden_dim, 1, kernel_size=1)
+            self.heads[disease] = nn.Linear(self.hidden_dim, 1)
+            nn.init.normal_(self.heads[disease].weight, 0.0, 0.01)
+            nn.init.constant_(self.heads[disease].bias, 0.0)
+            if learn_tau:
+                self.temp_logit[disease] = nn.Parameter(
+                    torch.tensor(inv_sigmoid_temp(init_tau))
+                )
+
+        print(
+            f"OracleCT_Pillar_UnaryAttnPool: {model_repo_id} → {self.hidden_dim}d activ "
+            f"[64³] → full-volume attn → {num_diseases} diseases"
+            + (" [gradient checkpointing ON]" if self.use_gradient_checkpointing else "")
+        )
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if self.freeze_backbone:
+            self.backbone.eval()
+        return self
+
+    def forward(self, batch: Dict[str, Any]) -> torch.Tensor:
+        image = batch["image"]   # [B, 11, 384, 384, 384]
+        B = image.size(0)
+        device = image.device
+
+        # Pillar forward → spatial features
+        pillar_batch = {"anatomy": [self.modality]}
+        if self.use_gradient_checkpointing and self.training:
+            def _backbone_fwd(x):
+                return self.backbone(x, batch=pillar_batch)["activ"]
+            activ = grad_ckpt.checkpoint(_backbone_fwd, image, use_reentrant=False)
+        else:
+            activ = self.backbone(image, batch=pillar_batch)["activ"]
+        # activ: [B, 1152, 64, 64, 64]
+
+        # Full-volume ones mask — no organ guidance
+        ones_mask = torch.ones(B, 1, *activ.shape[2:], device=device)
+
+        logits_list = []
+        for disease in self.disease_names:
+            tau = (
+                0.2 + 1.8 * torch.sigmoid(self.temp_logit[disease])
+                if self.learn_tau else self.fixed_tau
+            )
+            pooled = masked_attention_pool_3d(
+                activ, ones_mask, self.score_convs[disease],
+                tau=tau, bias_in=None, bias_out=None,
+            )  # [B, 1152]
+            logit = self.heads[disease](pooled)  # [B, 1]
+            if torch.isnan(logit).any():
+                logit = torch.where(torch.isnan(logit), torch.zeros_like(logit), logit)
+            logits_list.append(logit)
+
+        return torch.cat(logits_list, dim=1)  # [B, num_diseases]
+
+
+# =============================================================================
+# MODEL 3: PILLAR 3D MASKED ATTENTION
 # =============================================================================
 
 class OracleCT_Pillar_MaskedAttn(nn.Module):
@@ -430,7 +544,7 @@ class OracleCT_Pillar_MaskedAttn(nn.Module):
 
 
 # =============================================================================
-# MODEL 3: PILLAR 3D MASKED ATTENTION + SCALAR FUSION
+# MODEL 4: PILLAR 3D MASKED ATTENTION + SCALAR FUSION
 # =============================================================================
 
 class OracleCT_Pillar_MaskedAttnScalar(nn.Module):
