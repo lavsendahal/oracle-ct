@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=pillar_e2e
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:a6000:6
-#SBATCH --cpus-per-task=96
+#SBATCH --gres=gpu:a6000:4
+#SBATCH --cpus-per-task=64
 #SBATCH --output=/home/ld258/ipredict/slurm_logs/oracle-ct/pillar_e2e-output-%j.out
 #SBATCH --error=/home/ld258/ipredict/slurm_logs/oracle-ct/pillar_e2e-error-%j.out
 
@@ -21,7 +21,7 @@
 #       training.resume_from_checkpoint=/path/to/checkpoints/pillar_masked_attn_last.pt
 # ===========================================================================
 
-NGPUS=6
+NGPUS=4
 
 # Dedicated local path where Pillar0-AbdomenCT was downloaded
 PILLAR_MODEL=/scratch/railabs/ld258/output/ct_triage/oracle-ct/pretrained_models/Pillar0-AbdomenCT

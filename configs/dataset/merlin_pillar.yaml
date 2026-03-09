@@ -14,7 +14,7 @@ paths:
   features_parquet: /scratch/railabs/ld258/output/ct_triage/macroradiomics/merlin/features/features_combined.parquet
 
   # Disease labels
-  labels_csv: /scratch/railabs/ld258/dataset/merlin/merlinabdominalctdataset/zero_shot_findings_disease_cls.csv
+  labels_csv: /scratch/railabs/SHARED/data/ct_images/public/merlinabdominalctdataset/zero_shot_findings_disease_cls.csv
 
   # Train/Val/Test splits
   train_ids: /home/ld258/ipredict/janus/splits/train_ids.txt

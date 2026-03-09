@@ -110,7 +110,12 @@ class JanusDataset(Dataset):
 
         # Load labels
         self.labels_df = pd.read_csv(labels_csv)
-        self.labels_df = self.labels_df.set_index("study id")
+        if "study id" in self.labels_df.columns:
+            self.labels_df = self.labels_df.set_index("study id")
+        elif "case_id" in self.labels_df.columns:
+            self.labels_df = self.labels_df.set_index("case_id")
+        else:
+            raise ValueError(f"Labels CSV must have a 'study id' or 'case_id' column. Found: {list(self.labels_df.columns)}")
 
         # Determine disease names
         if disease_names is None:
